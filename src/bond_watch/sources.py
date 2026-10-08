@@ -6,7 +6,8 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from math import isfinite
+from datetime import date, datetime, timezone
 from urllib.parse import urlparse
 
 from .http import Http
@@ -99,26 +100,100 @@ def _float(value):
         return None
 
 
-def fetch_bond_price(http: Http, secid: str) -> dict | None:
+def _positive(value) -> float | None:
+    number = _float(value)
+    return number if number is not None and isfinite(number) and number > 0 else None
+
+
+def _iso_date(value) -> str | None:
+    if not value:
+        return None
+    try:
+        raw = str(value)
+        return (date.fromisoformat(raw) if len(raw) == 10 else datetime.fromisoformat(raw).date()).isoformat()
+    except ValueError:
+        return None
+
+
+def fetch_bond_price(http: Http, secid: str, rejections: dict[str, int] | None = None) -> dict | None:
+    row_rejections: dict[str, int] = {}
+
+    def reject(reason: str) -> None:
+        row_rejections[reason] = row_rejections.get(reason, 0) + 1
+
+    def record_rejections() -> None:
+        if rejections is not None:
+            for reason, count in row_rejections.items():
+                rejections[reason] = rejections.get(reason, 0) + count
+
     response = http.get(
         f"https://iss.moex.com/iss/engines/stock/markets/bonds/securities/{secid}.json",
         params={"iss.meta": "off"},
     )
     data = response.json()
-    rows = _rows(data, "marketdata")
-    securities = _rows(data, "securities")
-    valid = [row for row in rows if row.get("BOARDID") in {"TQCB", "TQOB", "TQIR", "TQOD"}]
-    row = next((r for r in valid if _float(r.get("NUMTRADES")) and (_float(r.get("LAST")) or _float(r.get("LASTPRICE")))), None)
-    security = next((s for s in securities if s.get("BOARDID") == row.get("BOARDID")), {}) if row else {}
-    if not row:
+    securities = {
+        (row.get("SECID"), row.get("BOARDID")): row
+        for row in _rows(data, "securities")
+    }
+    yields = {
+        (row.get("SECID"), row.get("BOARDID")): row
+        for row in _rows(data, "marketdata_yields")
+    }
+    versions = _rows(data, "dataversion")
+    session_date = _iso_date(versions[0].get("trade_date")) if len(versions) == 1 else None
+    supported_boards = {"TQCB", "TQOB", "TQIR", "TQOD"}
+    market_rows = _rows(data, "marketdata")
+    if not market_rows:
+        reject("no_marketdata")
+        record_rejections()
         return None
-    price = _float(row.get("LAST")) or _float(row.get("LASTPRICE"))
-    previous_price = _float(row.get("PREVPRICE"))
-    nominal = _float(security.get("FACEVALUE"))
-    trade_date = row.get("LASTTRADEDATE") or row.get("TRADEDATE") or security.get("LASTTRADEDATE")
-    if not price or not nominal or not trade_date:
-        return None
-    return {"clean_price": price, "previous_clean_price": previous_price, "nominal": nominal, "trading_date": str(trade_date), "board": row.get("BOARDID")}
+    for row in market_rows:
+        board = row.get("BOARDID")
+        if row.get("SECID") != secid:
+            reject("secid_mismatch")
+            continue
+        if board not in supported_boards:
+            reject("unsupported_board")
+            continue
+        security = securities.get((secid, board))
+        if security is None:
+            reject("missing_security_row")
+            continue
+        if _positive(row.get("NUMTRADES")) is None:
+            reject("no_trades")
+            continue
+        price = _positive(row.get("LAST")) or _positive(row.get("LASTPRICE"))
+        if price is None:
+            reject("invalid_price")
+            continue
+        nominal = _positive(security.get("FACEVALUE"))
+        if nominal is None:
+            reject("invalid_nominal")
+            continue
+        raw_market_date = row.get("LASTTRADEDATE") or row.get("TRADEDATE")
+        raw_trade_moment = yields.get((secid, board), {}).get("TRADEMOMENT")
+        dated_values = [value for value in (raw_market_date, raw_trade_moment, versions[0].get("trade_date") if len(versions) == 1 else None) if value]
+        dates = [_iso_date(value) for value in dated_values]
+        if any(value is None for value in dates):
+            reject("invalid_trade_date")
+            continue
+        if len(set(dates)) > 1:
+            reject("conflicting_trade_date")
+            continue
+        trade_date = dates[0] if dates else session_date
+        if not trade_date:
+            reject("missing_trade_date")
+            continue
+        return {
+            "clean_price": price,
+            "previous_clean_price": _positive(security.get("PREVPRICE")),
+            "previous_trade_date": _iso_date(security.get("PREVDATE")),
+            "nominal": nominal,
+            "trading_date": trade_date,
+            "board": board,
+        }
+    record_rejections()
+    return None
 
 
 def _clean(value: str) -> str:

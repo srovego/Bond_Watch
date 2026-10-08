@@ -1,0 +1,87 @@
+{
+  "source_url": "https://iss.moex.com/iss/engines/stock/markets/bonds/securities/SU26247RMFS5.json?iss.meta=off",
+  "securities": {
+    "columns": [
+      "SECID",
+      "BOARDID",
+      "ACCRUEDINT",
+      "PREVPRICE",
+      "FACEVALUE",
+      "PREVDATE",
+      "ISIN"
+    ],
+    "data": [
+      [
+        "SU26247RMFS5",
+        "SPOB",
+        45.31,
+        null,
+        1000,
+        "2026-10-07",
+        "RU000A108EF8"
+      ],
+      [
+        "SU26247RMFS5",
+        "TQOB",
+        45.31,
+        79.17,
+        1000,
+        "2026-10-07",
+        "RU000A108EF8"
+      ]
+    ]
+  },
+  "marketdata": {
+    "columns": [
+      "SECID",
+      "LAST",
+      "NUMTRADES",
+      "BOARDID",
+      "TIME"
+    ],
+    "data": [
+      [
+        "SU26247RMFS5",
+        null,
+        0,
+        "SPOB",
+        "19:20:56"
+      ],
+      [
+        "SU26247RMFS5",
+        78.799,
+        11303,
+        "TQOB",
+        "20:49:12"
+      ]
+    ]
+  },
+  "dataversion": {
+    "columns": [
+      "trade_date",
+      "trade_session_date"
+    ],
+    "data": [
+      [
+        "2026-10-08",
+        "2026-10-08"
+      ]
+    ]
+  },
+  "marketdata_yields": {
+    "columns": [
+      "SECID",
+      "BOARDID",
+      "PRICE",
+      "TRADEMOMENT"
+    ],
+    "data": [
+      [
+        "SU26247RMFS5",
+        "TQOB",
+        78.799,
+        "2026-10-08 20:49:12"
+      ]
+    ]
+  }
+}

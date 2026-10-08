@@ -86,14 +86,68 @@ def test_search_rejects_wrong_isin():
         resolve_isin(FakeHttp([Response(fixture["search"])]), "RU000A1095W5")
 
 
+def price_fixture(kind: str = "corporate") -> dict:
+    # Selected columns from live ISS bond-price responses, including dataversion.
+    return json.loads((Path(__file__).parent / "fixtures" / f"moex_price_{kind}.json").read_text(encoding="utf-8"))
+
+
+def set_block_field(payload: dict, block: str, field: str, value, row: int = 0) -> None:
+    section = payload[block]
+    section["data"][row][section["columns"].index(field)] = value
+
+
+@pytest.mark.parametrize("kind,secid,board", [("corporate", "RU000A1095W4", "TQCB"), ("ofz", "SU26247RMFS5", "TQOB")])
+def test_price_uses_live_iss_blocks(kind, secid, board):
+    payload = price_fixture(kind)
+    result = fetch_bond_price(FakeHttp([Response(payload)]), secid)
+    assert result["board"] == board
+    assert result["nominal"] == 1000
+    assert result["trading_date"] == payload["dataversion"]["data"][0][payload["dataversion"]["columns"].index("trade_date")]
+    security = next(dict(zip(payload["securities"]["columns"], row)) for row in payload["securities"]["data"] if row[payload["securities"]["columns"].index("BOARDID")] == board)
+    assert result["previous_clean_price"] == security["PREVPRICE"]
+    assert result["previous_trade_date"] == security["PREVDATE"]
+    assert result["clean_price"] > 0
+
+
 def test_price_requires_trade_and_nominal():
-    payload = {
-        "marketdata": {"columns": ["BOARDID", "NUMTRADES", "LAST", "LASTTRADEDATE", "PREVPRICE"], "data": [["TQOB", 4, 95.2, "2026-10-08", 96.0]]},
-        "securities": {"columns": ["BOARDID", "FACEVALUE"], "data": [["TQOB", 1000]]},
-    }
-    assert fetch_bond_price(FakeHttp([Response(payload)]), "SU29007RMFS0")["clean_price"] == 95.2
-    payload["marketdata"]["data"][0][1] = 0
-    assert fetch_bond_price(FakeHttp([Response(payload)]), "SU29007RMFS0") is None
+    payload = price_fixture()
+    set_block_field(payload, "marketdata", "NUMTRADES", 0)
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["no_trades"] == 1
+    set_block_field(payload, "marketdata", "NUMTRADES", 12)
+    set_block_field(payload, "securities", "FACEVALUE", None)
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["invalid_nominal"] == 1
+
+
+def test_price_date_comes_from_iss_and_rejects_conflicts():
+    payload = price_fixture()
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", None)
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")["trading_date"] == "2026-10-08"
+    set_block_field(payload, "dataversion", "trade_date", None)
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["missing_trade_date"] == 1
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", "2026-10-07 20:45:42")
+    set_block_field(payload, "dataversion", "trade_date", "2026-10-08")
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["conflicting_trade_date"] == 1
+
+
+def test_price_rejects_wrong_board_or_secid():
+    payload = price_fixture()
+    set_block_field(payload, "securities", "BOARDID", "TQOB")
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["missing_security_row"] == 1
+    payload = price_fixture()
+    set_block_field(payload, "marketdata", "SECID", "RU000A1095W5")
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["secid_mismatch"] == 1
 
 
 def test_cbr_rss_keeps_source_url_and_publication_time():
@@ -189,29 +243,60 @@ def test_verified_snapshot_seeds_all_bonds(tmp_path):
     assert conn.execute("SELECT count(*) FROM issuers").fetchone()[0] == 8
 
 
-def test_price_poll_uses_previous_close_and_skips_amortization(tmp_path):
+def test_price_poll_stores_first_quote_before_alerting_and_skips_amortization(tmp_path):
     from bond_watch.pipeline import poll_prices
     conn = connect(tmp_path / "db.sqlite")
     init_sources(conn, {"sources": {"moex_iss": True}})
     with conn:
         issuer = conn.execute("INSERT INTO issuers(name,category) VALUES('Issuer','corporate')").lastrowid
         conn.execute(
-            "INSERT INTO bonds(isin,secid,issuer_id,status,card_url) VALUES('RU000A0JV4M0','RU000A0JV4M0',?,'verified','https://moex.com/card')",
+            "INSERT INTO bonds(isin,secid,issuer_id,status,card_url) VALUES('RU000A1095W4','RU000A1095W4',?,'verified','https://moex.com/card')",
             (issuer,),
         )
-    def price(date, last, prev, nominal):
-        return Response({
-            "marketdata": {"columns": ["BOARDID", "NUMTRADES", "LAST", "PREVPRICE", "LASTTRADEDATE"], "data": [["TQCB", 3, last, prev, date]]},
-            "securities": {"columns": ["BOARDID", "FACEVALUE"], "data": [["TQCB", nominal]]},
-        })
+
+    def price(trade_date, prev_date, last, prev, nominal):
+        payload = price_fixture()
+        set_block_field(payload, "marketdata", "LAST", last)
+        set_block_field(payload, "securities", "PREVPRICE", prev)
+        set_block_field(payload, "securities", "FACEVALUE", nominal)
+        set_block_field(payload, "securities", "PREVDATE", prev_date)
+        set_block_field(payload, "dataversion", "trade_date", trade_date)
+        set_block_field(payload, "marketdata_yields", "TRADEMOMENT", trade_date + " 20:45:42")
+        return Response(payload)
+
     settings = {"sources": {"moex_iss": True}, "price_threshold_corporate_percent": 3, "price_threshold_ofz_percent": 2, "request_pause_seconds": 0}
-    poll_prices(conn, settings, FakeHttp([price("2026-10-07", 100, 100, 1000)]))
-    poll_prices(conn, settings, FakeHttp([price("2026-10-08", 96, 100, 1000)]))
+    poll_prices(conn, settings, FakeHttp([price("2026-10-07", "2026-10-06", 100, 100, 1000)]))
+    assert conn.execute("SELECT count(*) FROM price_observations").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM news WHERE category='price_move'").fetchone()[0] == 0
+    first_run = conn.execute("SELECT items_seen,rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert first_run["items_seen"] == 1
+    assert json.loads(first_run["rejection_counts_json"])["comparison_no_prior_observation"] == 1
+
+    poll_prices(conn, settings, FakeHttp([price("2026-10-08", "2026-10-07", 96, 100, 1000)]))
     assert conn.execute("SELECT count(*) FROM news WHERE category='price_move'").fetchone()[0] == 1
-    poll_prices(conn, settings, FakeHttp([price("2026-10-09", 90, 96, 900)]))
+    poll_prices(conn, settings, FakeHttp([price("2026-10-09", "2026-10-08", 90, 96, 900)]))
     assert conn.execute("SELECT count(*) FROM news WHERE category='price_move'").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM price_observations").fetchone()[0] == 3
+    last_run = conn.execute("SELECT items_seen,rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert last_run["items_seen"] == 1
+    assert json.loads(last_run["rejection_counts_json"])["comparison_nominal_changed"] == 1
 
 
+def test_price_poll_persists_quote_rejection_counters(tmp_path):
+    from bond_watch.pipeline import poll_prices
+    conn = connect(tmp_path / "db.sqlite")
+    init_sources(conn, {"sources": {"moex_iss": True}})
+    with conn:
+        issuer = conn.execute("INSERT INTO issuers(name) VALUES('Issuer')").lastrowid
+        conn.execute("INSERT INTO bonds(isin,secid,issuer_id,status) VALUES('RU000A1095W4','RU000A1095W4',?,'verified')", (issuer,))
+    payload = price_fixture()
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", None)
+    set_block_field(payload, "dataversion", "trade_date", None)
+    poll_prices(conn, {"sources": {"moex_iss": True}, "request_pause_seconds": 0}, FakeHttp([Response(payload)]))
+    run = conn.execute("SELECT status,items_seen,rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert run["status"] == "ok"
+    assert run["items_seen"] == 0
+    assert json.loads(run["rejection_counts_json"]) == {"missing_trade_date": 1, "no_valid_quote": 1}
 
 
 def test_long_digest_is_split_without_losing_news(tmp_path):
@@ -245,7 +330,7 @@ def test_verified_ratings_are_seeded_with_provenance(tmp_path):
     conn = connect(tmp_path / "ratings.sqlite")
     sync_portfolio(conn, project_root())
     seed_verified_bonds(conn, project_root())
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
     assert conn.execute("SELECT count(*) FROM bonds WHERE rating IS NOT NULL AND rating_url IS NOT NULL AND rating_date IS NOT NULL").fetchone()[0] == 6
     assert conn.execute("SELECT rating FROM bonds WHERE isin='RU000A1090N4'").fetchone()[0] is None
 
@@ -263,3 +348,54 @@ def test_price_event_reports_related_publication(tmp_path):
     body = conn.execute("SELECT body FROM news WHERE category='price_move'").fetchone()[0]
     assert "Example Issuer report" in body
     assert "https://www.cbr.ru/example" in body
+
+
+def test_price_can_use_board_trade_moment_without_dataversion_date():
+    payload = price_fixture()
+    set_block_field(payload, "dataversion", "trade_date", None)
+    result = fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")
+    assert result["trading_date"] == "2026-10-08"
+
+
+def test_price_alert_requires_matching_previous_trading_date(tmp_path):
+    from bond_watch.pipeline import poll_prices
+    conn = connect(tmp_path / "base.sqlite")
+    init_sources(conn, {"sources": {"moex_iss": True}})
+    with conn:
+        issuer = conn.execute("INSERT INTO issuers(name) VALUES('Issuer')").lastrowid
+        conn.execute("INSERT INTO bonds(isin,secid,issuer_id,status) VALUES('RU000A1095W4','RU000A1095W4',?,'verified')", (issuer,))
+        conn.execute("INSERT INTO price_observations(isin,trading_date,clean_price,nominal,observed_at) VALUES('RU000A1095W4','2026-10-06',100,1000,'2026-10-06')")
+    payload = price_fixture()
+    set_block_field(payload, "marketdata", "LAST", 90)
+    set_block_field(payload, "securities", "PREVPRICE", 100)
+    set_block_field(payload, "securities", "PREVDATE", "2026-10-07")
+    poll_prices(conn, {"sources": {"moex_iss": True}, "request_pause_seconds": 0}, FakeHttp([Response(payload)]))
+    assert conn.execute("SELECT count(*) FROM price_observations").fetchone()[0] == 2
+    assert conn.execute("SELECT count(*) FROM news WHERE category='price_move'").fetchone()[0] == 0
+    run = conn.execute("SELECT rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert json.loads(run[0])["comparison_prior_date_mismatch"] == 1
+
+
+def test_price_diagnostics_migrate_existing_database(tmp_path):
+    from bond_watch.db import MIGRATIONS
+    path = tmp_path / "old.sqlite"
+    raw = sqlite3.connect(path)
+    for index, migration in enumerate(MIGRATIONS[:3], start=1):
+        raw.executescript(migration + f"\nPRAGMA user_version={index};")
+    raw.close()
+    conn = connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert "rejection_counts_json" in [row[1] for row in conn.execute("PRAGMA table_info(collector_runs)")]
+
+
+def test_price_rejects_nonpositive_last_and_accepts_missing_previous_close():
+    payload = price_fixture()
+    set_block_field(payload, "marketdata", "LAST", 0)
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["invalid_price"] == 1
+    payload = price_fixture()
+    set_block_field(payload, "securities", "PREVPRICE", None)
+    result = fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")
+    assert result["clean_price"] > 0
+    assert result["previous_clean_price"] is None

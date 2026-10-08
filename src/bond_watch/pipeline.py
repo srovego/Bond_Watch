@@ -93,7 +93,7 @@ def seed_verified_bonds(conn, root: Path) -> None:
                      data.get("rating_status"), isin, str(data["rating_date"])),
                 )
 
-def _run(conn, source_id: str, action):
+def _run(conn, source_id: str, action, diagnostics: dict[str, int] | None = None):
     started = utcnow()
     with conn:
         cur = conn.execute("INSERT INTO collector_runs(source_id,started_at,status) VALUES(?,?,?)", (source_id, started, "running"))
@@ -102,11 +102,18 @@ def _run(conn, source_id: str, action):
     except Exception as exc:
         log.exception("%s collection failed", source_id)
         with conn:
-            conn.execute("UPDATE collector_runs SET finished_at=?,status='error',error=? WHERE id=?", (utcnow(), str(exc)[:500], cur.lastrowid))
+            conn.execute(
+                "UPDATE collector_runs SET finished_at=?,status='error',error=?,items_seen=?,rejection_counts_json=? WHERE id=?",
+                (utcnow(), str(exc)[:500], (diagnostics or {}).get("accepted", 0),
+                 json.dumps(diagnostics, ensure_ascii=False) if diagnostics is not None else None, cur.lastrowid),
+            )
             conn.execute("UPDATE sources SET status='error',last_error=? WHERE id=?", (str(exc)[:500], source_id))
         return False
     with conn:
-        conn.execute("UPDATE collector_runs SET finished_at=?,status='ok',items_seen=? WHERE id=?", (utcnow(), count, cur.lastrowid))
+        conn.execute(
+            "UPDATE collector_runs SET finished_at=?,status='ok',items_seen=?,rejection_counts_json=? WHERE id=?",
+            (utcnow(), count, json.dumps(diagnostics, ensure_ascii=False) if diagnostics is not None else None, cur.lastrowid),
+        )
         conn.execute("UPDATE sources SET status='ok',last_success_at=?,last_error=NULL WHERE id=?", (utcnow(), source_id))
     return True
 
@@ -270,6 +277,11 @@ def _price_event(conn, bond, current: dict, previous, change: float) -> None:
 def poll_prices(conn, settings: dict, http: Http) -> None:
     if not settings.get("sources", {}).get("moex_iss", True):
         return
+    diagnostics: dict[str, int] = {}
+
+    def count_reason(reason: str) -> None:
+        diagnostics[reason] = diagnostics.get(reason, 0) + 1
+
     def action():
         count = 0
         errors = []
@@ -281,20 +293,27 @@ def poll_prices(conn, settings: dict, http: Http) -> None:
             raise RuntimeError("no verified bonds; run bond-watch resolve")
         for bond in rows:
             try:
-                current = fetch_bond_price(http, bond["secid"])
+                current = fetch_bond_price(http, bond["secid"], diagnostics)
                 if not current:
+                    count_reason("no_valid_quote")
                     continue
                 previous = conn.execute(
                     """SELECT * FROM price_observations WHERE isin=? AND trading_date<?
                     ORDER BY trading_date DESC LIMIT 1""", (bond["isin"], current["trading_date"])
                 ).fetchone()
-                if previous and previous["nominal"] == current["nominal"] and current["previous_clean_price"] and current["previous_clean_price"] > 0:
+                if not previous:
+                    count_reason("comparison_no_prior_observation")
+                elif not current["previous_trade_date"] or previous["trading_date"] != current["previous_trade_date"]:
+                    count_reason("comparison_prior_date_mismatch")
+                elif previous["nominal"] != current["nominal"]:
+                    count_reason("comparison_nominal_changed")
+                elif current["previous_clean_price"] is None:
+                    count_reason("comparison_no_previous_close")
+                else:
                     change = 100 * (current["clean_price"] / current["previous_clean_price"] - 1)
                     threshold_key = "price_threshold_ofz_percent" if bond["category"] == "ofz" else "price_threshold_corporate_percent"
                     if abs(change) >= float(settings[threshold_key]):
                         _price_event(conn, bond, current, {"clean_price": current["previous_clean_price"]}, change)
-                elif previous and previous["nominal"] != current["nominal"]:
-                    log.info("Skip %s price comparison: nominal changed", bond["isin"])
                 with conn:
                     conn.execute(
                         """INSERT INTO price_observations(isin,trading_date,clean_price,nominal,observed_at)
@@ -303,13 +322,17 @@ def poll_prices(conn, settings: dict, http: Http) -> None:
                         (bond["isin"], current["trading_date"], current["clean_price"], current["nominal"], utcnow()),
                     )
                 count += 1
+                diagnostics["accepted"] = count
             except Exception as exc:
                 errors.append(f"{bond['isin']}: {exc}")
-            time.sleep(float(settings.get("request_pause_seconds", 0.4)))
+                count_reason("processing_error")
+            finally:
+                time.sleep(float(settings.get("request_pause_seconds", 0.4)))
+        log.info("MOEX price poll: accepted=%s diagnostics=%s", count, diagnostics)
         if errors:
             raise RuntimeError("; ".join(errors)[:500])
         return count
-    _run(conn, "moex_iss", action)
+    _run(conn, "moex_iss", action, diagnostics)
 
 
 def send_urgent(conn) -> None:

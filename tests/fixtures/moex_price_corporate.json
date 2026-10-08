@@ -1,0 +1,71 @@
+{
+  "source_url": "https://iss.moex.com/iss/engines/stock/markets/bonds/securities/RU000A1095W4.json?iss.meta=off",
+  "securities": {
+    "columns": [
+      "SECID",
+      "BOARDID",
+      "ACCRUEDINT",
+      "PREVPRICE",
+      "FACEVALUE",
+      "PREVDATE",
+      "ISIN"
+    ],
+    "data": [
+      [
+        "RU000A1095W4",
+        "TQCB",
+        26.98,
+        100.11,
+        1000,
+        "2026-10-07",
+        "RU000A1095W4"
+      ]
+    ]
+  },
+  "marketdata": {
+    "columns": [
+      "SECID",
+      "LAST",
+      "NUMTRADES",
+      "BOARDID",
+      "TIME"
+    ],
+    "data": [
+      [
+        "RU000A1095W4",
+        100.24,
+        13,
+        "TQCB",
+        "20:45:42"
+      ]
+    ]
+  },
+  "dataversion": {
+    "columns": [
+      "trade_date",
+      "trade_session_date"
+    ],
+    "data": [
+      [
+        "2026-10-08",
+        "2026-10-08"
+      ]
+    ]
+  },
+  "marketdata_yields": {
+    "columns": [
+      "SECID",
+      "BOARDID",
+      "PRICE",
+      "TRADEMOMENT"
+    ],
+    "data": [
+      [
+        "RU000A1095W4",
+        "TQCB",
+        100.24,
+        "2026-10-08 20:45:42"
+      ]
+    ]
+  }
+}

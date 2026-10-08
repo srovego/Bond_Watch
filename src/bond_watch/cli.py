@@ -51,6 +51,12 @@ def status(conn) -> None:
     print("Sources:")
     for row in conn.execute("SELECT * FROM sources ORDER BY id"):
         print(f"  {row['id']}: {row['status']} | last success {row['last_success_at'] or 'never'} | {row['last_error'] or ''}")
+    latest_prices = conn.execute(
+        "SELECT items_seen,rejection_counts_json FROM collector_runs "
+        "WHERE source_id='moex_iss' AND rejection_counts_json IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if latest_prices:
+        print(f"Price quotes: accepted {latest_prices['items_seen']} | diagnostics {latest_prices['rejection_counts_json']}")
     print("Bonds:")
     for row in conn.execute("SELECT b.isin,b.status,b.resolution_error,i.name FROM bonds b LEFT JOIN issuers i ON i.id=b.issuer_id ORDER BY b.isin"):
         print(f"  {row['isin']}: {row['name'] or 'unresolved'} [{row['status']}] {row['resolution_error'] or ''}")

@@ -79,6 +79,9 @@ MIGRATIONS = [
     """
     ALTER TABLE bonds ADD COLUMN rating_date TEXT;
     ALTER TABLE bonds ADD COLUMN rating_status TEXT;
+    """,
+    """
+    ALTER TABLE collector_runs ADD COLUMN rejection_counts_json TEXT;
     """
 ]
 

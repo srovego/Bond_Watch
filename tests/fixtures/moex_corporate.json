@@ -1,0 +1,187 @@
+{
+  "search": {
+    "securities": {
+      "columns": [
+        "secid",
+        "shortname",
+        "regnumber",
+        "name",
+        "isin",
+        "is_traded",
+        "emitent_id",
+        "emitent_title",
+        "emitent_inn",
+        "emitent_okpo",
+        "type",
+        "group",
+        "primary_boardid",
+        "marketprice_boardid"
+      ],
+      "data": [
+        [
+          "RU000A1095W4",
+          "Ростел1P9R",
+          "4B02-09-00124-A-001P",
+          "Ростелеком ПАО 001P-09R",
+          "RU000A1095W4",
+          1,
+          1193,
+          "Публичное акционерное общество \"Ростелеком\"",
+          "7707049388",
+          "17514186",
+          "exchange_bond",
+          "stock_bonds",
+          "TQCB",
+          "TQCB"
+        ]
+      ]
+    }
+  },
+  "detail": {
+    "description": {
+      "columns": [
+        "name",
+        "title",
+        "value",
+        "type",
+        "sort_order",
+        "is_hidden",
+        "precision"
+      ],
+      "data": [
+        [
+          "SECID",
+          "Код ценной бумаги",
+          "RU000A1095W4",
+          "string",
+          1,
+          0,
+          null
+        ],
+        [
+          "ISSUENAME",
+          "Наименование ценной бумаги",
+          "биржевые облигации процентные неконвертируемые бездокументарные серии 001P-09R",
+          "string",
+          2,
+          0,
+          null
+        ],
+        [
+          "NAME",
+          "Полное наименование",
+          "Ростелеком ПАО 001P-09R",
+          "string",
+          3,
+          0,
+          null
+        ],
+        [
+          "SHORTNAME",
+          "Краткое наименование",
+          "Ростел1P9R",
+          "string",
+          4,
+          0,
+          null
+        ],
+        [
+          "REGNUMBER",
+          "Номер государственной регистрации",
+          "4B02-09-00124-A-001P",
+          "string",
+          5,
+          0,
+          null
+        ],
+        [
+          "ISIN",
+          "ISIN код",
+          "RU000A1095W4",
+          "string",
+          6,
+          0,
+          null
+        ],
+        [
+          "FACEVALUE",
+          "Номинальная стоимость",
+          "1000",
+          "number",
+          27,
+          0,
+          2
+        ],
+        [
+          "TYPENAME",
+          "Вид/категория ценной бумаги",
+          "Биржевая облигация",
+          "string",
+          9000,
+          0,
+          null
+        ],
+        [
+          "TYPE",
+          "Тип бумаги",
+          "exchange_bond",
+          "string",
+          10000,
+          1,
+          null
+        ],
+        [
+          "EMITTER_ID",
+          "Код эмитента",
+          "1193",
+          "number",
+          11000,
+          1,
+          null
+        ]
+      ]
+    },
+    "boards": {
+      "columns": [
+        "secid",
+        "boardid",
+        "title",
+        "board_group_id",
+        "market_id",
+        "market",
+        "engine_id",
+        "engine",
+        "is_traded",
+        "decimals",
+        "history_from",
+        "history_till",
+        "listed_from",
+        "listed_till",
+        "is_primary",
+        "currencyid",
+        "unit"
+      ],
+      "data": [
+        [
+          "RU000A1095W4",
+          "TQCB",
+          "Т+: Облигации - безадрес.",
+          58,
+          2,
+          "bonds",
+          1,
+          "stock",
+          1,
+          2,
+          "2024-08-07",
+          "2026-10-07",
+          "2024-08-07",
+          "2026-10-08",
+          1,
+          "RUB",
+          "%"
+        ]
+      ]
+    }
+  }
+}

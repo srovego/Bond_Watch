@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -30,23 +31,59 @@ class FakeHttp:
         return next(self.responses)
 
 
-def test_resolve_requires_exact_isin_and_issuer():
-    payload = {
-        "securities": {
-            "columns": ["secid", "ISIN", "shortname"],
-            "data": [["SU29007RMFS0", "RU000A0JV4M0", "ОФЗ 29007"]],
-        },
-        "description": {
-            "columns": ["name", "value"],
-            "data": [["ISSUERNAME", "Минфин России"], ["ISSUERINN", "7710168360"], ["SECTYPE", "ofz"]],
-        },
-    }
-    data = resolve_isin(FakeHttp([Response(payload)]), "RU000A0JV4M0", "SU29007RMFS0")
-    assert data["issuer_name"] == "Минфин России"
-    assert data["inn"] == "7710168360"
-    assert data["category"] == "ofz"
-    with pytest.raises(ValueError, match="exact"):
-        resolve_isin(FakeHttp([Response(payload)]), "RU000A108EF8", "SU29007RMFS0")
+def moex_fixture(kind: str) -> dict:
+    # Captured from MOEX ISS with iss.meta=off; rows retain the actual column layout.
+    return json.loads((Path(__file__).parent / "fixtures" / f"moex_{kind}.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "kind,isin,secid,inn,category",
+    [
+        ("corporate", "RU000A1095W4", "RU000A1095W4", "7707049388", "corporate"),
+        ("ofz", "RU000A108EF8", "SU26247RMFS5", "7710168360", "ofz"),
+    ],
+)
+def test_resolve_real_iss_structure(kind, isin, secid, inn, category):
+    fixture = moex_fixture(kind)
+    assert "securities" not in fixture["detail"]
+    result = resolve_isin(FakeHttp([Response(fixture["search"]), Response(fixture["detail"])]), isin, "stale-hint")
+    assert result["isin"] == isin
+    assert result["secid"] == secid
+    assert result["inn"] == inn
+    assert result["category"] == category
+    assert result["issue_name"]
+    assert result["issue_number"]
+    assert result["issuer_name"]
+    assert result["moex_id"]
+
+
+def test_description_uses_named_columns_not_positions():
+    fixture = moex_fixture("ofz")
+    block = fixture["detail"]["description"]
+    old_columns = block["columns"]
+    reordered = ["value", "type", "name", "precision", "title", "is_hidden", "sort_order"]
+    block["data"] = [[row[old_columns.index(column)] for column in reordered] for row in block["data"]]
+    block["columns"] = reordered
+    result = resolve_isin(FakeHttp([Response(fixture["search"]), Response(fixture["detail"])]), "RU000A108EF8")
+    assert result["secid"] == "SU26247RMFS5"
+    assert result["issue_number"] == "26247RMFS"
+
+
+@pytest.mark.parametrize("field,bad_value", [("ISIN", "RU000A1095W5"), ("SECID", "RU000A1095W5")])
+def test_detail_rejects_mismatched_identifiers(field, bad_value):
+    fixture = moex_fixture("corporate")
+    block = fixture["detail"]["description"]
+    for row in block["data"]:
+        if row[block["columns"].index("name")] == field:
+            row[block["columns"].index("value")] = bad_value
+    with pytest.raises(ValueError, match="exact ISIN|SECID differs"):
+        resolve_isin(FakeHttp([Response(fixture["search"]), Response(fixture["detail"])]), "RU000A1095W4")
+
+
+def test_search_rejects_wrong_isin():
+    fixture = moex_fixture("corporate")
+    with pytest.raises(ValueError, match="exact ISIN/SECID"):
+        resolve_isin(FakeHttp([Response(fixture["search"])]), "RU000A1095W5")
 
 
 def test_price_requires_trade_and_nominal():
@@ -117,14 +154,29 @@ def test_price_event_links_verified_issuer(tmp_path):
 
 
 
-def test_resolve_new_isin_uses_exact_search():
-    search = {"securities": {"columns": ["secid", "isin"], "data": [["SU29007RMFS0", "RU000A0JV4M0"]]}}
-    detail = {
-        "securities": {"columns": ["secid", "ISIN"], "data": [["SU29007RMFS0", "RU000A0JV4M0"]]},
-        "description": {"columns": ["name", "value"], "data": [["ISSUERNAME", "Минфин России"], ["ISIN", "RU000A0JV4M0"]]},
-    }
-    result = resolve_isin(FakeHttp([Response(search), Response(detail)]), "RU000A0JV4M0")
-    assert result["secid"] == "SU29007RMFS0"
+def test_resolve_clears_previous_errors_for_corporate_and_ofz(tmp_path):
+    from bond_watch.pipeline import resolve_portfolio
+    root = tmp_path / "project"
+    (root / "config").mkdir(parents=True)
+    (root / "config/portfolio.yaml").write_text(
+        "isins:\n  - RU000A108EF8\n  - RU000A1095W4\n", encoding="utf-8"
+    )
+    conn = connect(tmp_path / "db.sqlite")
+    init_sources(conn, {"sources": {"moex_iss": True}})
+    with conn:
+        for isin in ("RU000A108EF8", "RU000A1095W4"):
+            conn.execute("INSERT INTO bonds(isin,resolution_error) VALUES(?,?)", (isin, "ISS detail returned no exact ISIN match"))
+    ofz = moex_fixture("ofz")
+    corporate = moex_fixture("corporate")
+    http = FakeHttp([Response(ofz["search"]), Response(ofz["detail"]), Response(corporate["search"]), Response(corporate["detail"])])
+    resolve_portfolio(conn, root, {"request_pause_seconds": 0}, http)
+    rows = conn.execute("SELECT isin,secid,status,resolution_error FROM bonds ORDER BY isin").fetchall()
+    assert [(r["isin"], r["secid"], r["status"], r["resolution_error"]) for r in rows] == [
+        ("RU000A108EF8", "SU26247RMFS5", "verified", None),
+        ("RU000A1095W4", "RU000A1095W4", "verified", None),
+    ]
+    source = conn.execute("SELECT status,last_error FROM sources WHERE id='moex_iss'").fetchone()
+    assert tuple(source) == ("ok", None)
 
 
 def test_verified_snapshot_seeds_all_bonds(tmp_path):

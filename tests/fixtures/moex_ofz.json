@@ -1,0 +1,187 @@
+{
+  "search": {
+    "securities": {
+      "columns": [
+        "secid",
+        "shortname",
+        "regnumber",
+        "name",
+        "isin",
+        "is_traded",
+        "emitent_id",
+        "emitent_title",
+        "emitent_inn",
+        "emitent_okpo",
+        "type",
+        "group",
+        "primary_boardid",
+        "marketprice_boardid"
+      ],
+      "data": [
+        [
+          "SU26247RMFS5",
+          "ОФЗ 26247",
+          "26247RMFS",
+          "ОФЗ-ПД 26247 11/05/39",
+          "RU000A108EF8",
+          1,
+          1228,
+          "Министерство финансов Российской Федерации",
+          "7710168360",
+          null,
+          "ofz_bond",
+          "stock_bonds",
+          "TQOB",
+          "TQOB"
+        ]
+      ]
+    }
+  },
+  "detail": {
+    "description": {
+      "columns": [
+        "name",
+        "title",
+        "value",
+        "type",
+        "sort_order",
+        "is_hidden",
+        "precision"
+      ],
+      "data": [
+        [
+          "SECID",
+          "Код ценной бумаги",
+          "SU26247RMFS5",
+          "string",
+          1,
+          0,
+          null
+        ],
+        [
+          "ISSUENAME",
+          "Наименование ценной бумаги",
+          "облигации федерального займа с постоянным купонным доходом",
+          "string",
+          2,
+          0,
+          null
+        ],
+        [
+          "NAME",
+          "Полное наименование",
+          "ОФЗ-ПД 26247 11/05/39",
+          "string",
+          3,
+          0,
+          null
+        ],
+        [
+          "SHORTNAME",
+          "Краткое наименование",
+          "ОФЗ 26247",
+          "string",
+          4,
+          0,
+          null
+        ],
+        [
+          "REGNUMBER",
+          "Номер государственной регистрации",
+          "26247RMFS",
+          "string",
+          5,
+          0,
+          null
+        ],
+        [
+          "ISIN",
+          "ISIN код",
+          "RU000A108EF8",
+          "string",
+          6,
+          0,
+          null
+        ],
+        [
+          "FACEVALUE",
+          "Номинальная стоимость",
+          "1000",
+          "number",
+          27,
+          0,
+          2
+        ],
+        [
+          "TYPENAME",
+          "Вид/категория ценной бумаги",
+          "Государственная облигация",
+          "string",
+          9000,
+          0,
+          null
+        ],
+        [
+          "TYPE",
+          "Тип бумаги",
+          "ofz_bond",
+          "string",
+          10000,
+          1,
+          null
+        ],
+        [
+          "EMITTER_ID",
+          "Код эмитента",
+          "1228",
+          "number",
+          11000,
+          1,
+          null
+        ]
+      ]
+    },
+    "boards": {
+      "columns": [
+        "secid",
+        "boardid",
+        "title",
+        "board_group_id",
+        "market_id",
+        "market",
+        "engine_id",
+        "engine",
+        "is_traded",
+        "decimals",
+        "history_from",
+        "history_till",
+        "listed_from",
+        "listed_till",
+        "is_primary",
+        "currencyid",
+        "unit"
+      ],
+      "data": [
+        [
+          "SU26247RMFS5",
+          "TQOB",
+          "Т+: Гособлигации - безадрес.",
+          58,
+          2,
+          "bonds",
+          1,
+          "stock",
+          1,
+          4,
+          "2024-05-15",
+          "2026-10-07",
+          "2024-05-15",
+          "2026-10-08",
+          1,
+          "RUB",
+          "%"
+        ]
+      ]
+    }
+  }
+}

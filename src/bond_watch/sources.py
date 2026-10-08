@@ -30,8 +30,15 @@ def _rows(data: dict, key: str) -> list[dict]:
     return [dict(zip(block.get("columns", []), values)) for values in block.get("data", [])]
 
 
-def _description(rows: list[dict]) -> dict:
-    return {r.get("name"): r.get("value") for r in rows if r.get("name")}
+def _description(block: dict) -> dict:
+    columns = block.get("columns") or []
+    if "name" not in columns or "value" not in columns:
+        raise ValueError("ISS description lacks name/value columns")
+    return {
+        row["name"]: row.get("value")
+        for row in _rows({"description": block}, "description")
+        if row.get("name")
+    }
 
 
 def _field(row: dict, name: str):
@@ -39,44 +46,48 @@ def _field(row: dict, name: str):
 
 
 def resolve_isin(http: Http, isin: str, secid_hint: str | None = None) -> dict:
-    lookup = secid_hint
-    if not lookup:
-        search = http.get("https://iss.moex.com/iss/securities.json", params={"q": isin, "iss.meta": "off"}).json()
-        candidate = next((row for row in _rows(search, "securities") if _field(row, "ISIN") == isin), None)
-        if not candidate:
-            raise ValueError("ISS search returned no exact ISIN match")
-        lookup = _field(candidate, "SECID")
-    if not lookup:
-        raise ValueError("ISS returned no SECID")
-    response = http.get(f"https://iss.moex.com/iss/securities/{lookup}.json", params={"iss.meta": "off"})
+    # The search block contains the issuer and maps an ISIN to its SECID. For OFZ
+    # these identifiers differ, so a saved hint must never replace the exact search.
+    search = http.get("https://iss.moex.com/iss/securities.json", params={"q": isin, "iss.meta": "off"}).json()
+    matches = [row for row in _rows(search, "securities") if _field(row, "ISIN") == isin]
+    secids = {_field(row, "SECID") for row in matches}
+    if len(secids) != 1 or None in secids:
+        raise ValueError("ISS search returned no unique exact ISIN/SECID match")
+    candidate = matches[0]
+    secid = secids.pop()
+
+    response = http.get(f"https://iss.moex.com/iss/securities/{secid}.json", params={"iss.meta": "off"})
     data = response.json()
-    sec = _rows(data, "securities")
-    desc = _description(_rows(data, "description"))
-    exact = next((row for row in sec if _field(row, "ISIN") == isin), None)
-    if not exact and desc.get("ISIN") == isin and sec:
-        exact = sec[0]
-    if not exact:
+    desc = _description(data.get("description") or {})
+    # This endpoint returns description and boards, with no securities block.
+    # Both identifiers must agree with the exact search result.
+    if desc.get("ISIN") != isin:
         raise ValueError("ISS detail returned no exact ISIN match")
-    secid = _field(exact, "SECID") or desc.get("SECID") or lookup
-    issuer = desc.get("ISSUERNAME") or _field(exact, "ISSUERNAME") or desc.get("EMITENT_TITLE")
-    inn = desc.get("ISSUERINN") or desc.get("INN")
-    issuer_id = desc.get("ISSUERID") or desc.get("EMITENT_ID")
-    category = "ofz" if (str(desc.get("SECTYPE") or "").lower() == "ofz" or str(secid).upper().startswith("SU")) else "corporate"
-    if category == "ofz" and not issuer:
-        issuer = "Министерство финансов Российской Федерации"
+    if desc.get("SECID") != secid:
+        raise ValueError("ISS detail SECID differs from exact search result")
+    search_emitter_id = _field(candidate, "EMITENT_ID")
+    detail_emitter_id = desc.get("EMITTER_ID")
+    if search_emitter_id is not None and detail_emitter_id is not None and str(search_emitter_id) != str(detail_emitter_id):
+        raise ValueError("ISS detail issuer ID differs from exact search result")
+
+    issuer = _field(candidate, "EMITENT_TITLE") or desc.get("ISSUERNAME")
+    inn = _field(candidate, "EMITENT_INN") or desc.get("ISSUERINN")
+    issuer_id = search_emitter_id or detail_emitter_id
+    instrument_type = desc.get("TYPE") or _field(candidate, "TYPE")
+    category = "ofz" if instrument_type == "ofz_bond" or str(secid).upper().startswith("SU") else "corporate"
     if not issuer:
-        raise ValueError("ISS lacks a verified issuer name")
+        raise ValueError("ISS exact search lacks a verified issuer name")
     return {
         "isin": isin,
         "secid": secid,
         "issuer_name": str(issuer),
         "inn": str(inn) if inn else None,
-        "moex_id": str(issuer_id) if issuer_id else None,
+        "moex_id": str(issuer_id) if issuer_id is not None else None,
         "category": category,
-        "shortname": _field(exact, "SHORTNAME"),
-        "issue_name": desc.get("NAME") or _field(exact, "NAME"),
-        "issue_number": desc.get("REGNUMBER") or desc.get("REGNUM"),
-        "bond_type": desc.get("SECTYPE") or _field(exact, "TYPE"),
+        "shortname": desc.get("SHORTNAME") or _field(candidate, "SHORTNAME"),
+        "issue_name": desc.get("ISSUENAME") or desc.get("NAME"),
+        "issue_number": desc.get("REGNUMBER") or _field(candidate, "REGNUMBER"),
+        "bond_type": desc.get("TYPENAME") or instrument_type,
         "card_url": f"https://www.moex.com/ru/issue.aspx?code={secid}",
         "nominal": _float(desc.get("FACEVALUE")),
     }

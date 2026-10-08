@@ -1,0 +1,185 @@
+verified_at: 2026-10-08
+bonds:
+  RU000A0JV4M0:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU29007RMFS0
+    issue_number: 29007RMFS
+    issue_name: облигации федерального займа с переменным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A0JV4M0
+  RU000A108EF8:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26247RMFS5
+    issue_number: 26247RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A108EF8
+  RU000A1038V6:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26238RMFS4
+    issue_number: 26238RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=26238RMFS
+  RU000A10D533:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26254RMFS1
+    issue_number: 26254RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A10D533
+  RU000A10DYG9:
+    issuer: акционерное общество "Атомный энергопромышленный комплекс"
+    inn: "7706664260"
+    secid: RU000A10DYG9
+    issue_number: 4B02-10-55319-E-001P
+    issue_name: Биржевые облигации процентные неконвертируемые бездокументарные серии 001Р-10
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A10DYG9
+    rating: ruAAA
+    rating_agency: Эксперт РА
+    rating_date: 2026-09-02
+    rating_url: https://www.raexpert.ru/database/securities/bonds/1000069007/
+  RU000A1095W4:
+    issuer: Публичное акционерное общество "Ростелеком"
+    inn: "7707049388"
+    secid: RU000A1095W4
+    issue_number: 4B02-09-00124-A-001P
+    issue_name: биржевые облигации процентные неконвертируемые бездокументарные серии 001P-09R
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A1095W4
+    rating: AAA(RU)
+    rating_agency: АКРА
+    rating_date: 2025-12-03
+    rating_url: https://www.acra-ratings.ru/ratings/emissions/1206/?lang=ru
+  RU000A100A82:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26228RMFS5
+    issue_number: 26228RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A100A82
+  RU000A109E71:
+    issuer: Публичное акционерное общество "ТрансКонтейнер"
+    inn: "7708591995"
+    secid: RU000A109E71
+    issue_number: 4B02-01-55194-E-002P
+    issue_name: Биржевые облигации процентные неконвертируемые бездокументарные серии П02-01
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A109E71
+    rating: ruAA-
+    rating_agency: Эксперт РА
+    rating_date: 2026-09-16
+    rating_url: https://www.raexpert.ru/database/securities/bonds/1000058971/
+    rating_status: под наблюдением
+  RU000A1014N4:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26232RMFS7
+    issue_number: 26232RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=26232RMFS
+  RU000A0ZYUB7:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26225RMFS1
+    issue_number: 26225RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A0ZYUB7
+  RU000A1090N4:
+    issuer: Акционерное общество "Аэрофьюэлз"
+    inn: "7714216826"
+    secid: RU000A1090N4
+    issue_number: 4B02-03-29449-H-002P
+    issue_name: Биржевые облигации процентные неконвертируемые бездокументарные серии 002Р-03
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/n72195
+    card_url: https://www.moex.com/ru/issue.aspx?board=TQOD&code=RU000A1090N4
+    inn_source_url: https://fs.moex.com/emidocs/2024/07/15/2829290_%D0%90%D1%8D%D1%80%D0%BE%D1%84%D1%8C%D1%8E%D1%8D%D0%BB%D0%B7%20%282024.07.12%29%20-%20%D1%80%D0%B5%D1%88%D0%B5%D0%BD%D0%B8%D0%B5%20%D0%BE%20%D0%B2%D1%8B%D0%BF%D1%83%D1%81%D0%BA%D0%B5%20002P-03.pdf
+  RU000A0JV4P3:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU29008RMFS8
+    issue_number: 29008RMFS
+    issue_name: облигации федерального займа с переменным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A0JV4P3
+  RU000A10AZ60:
+    issuer: открытое акционерное общество "Российские железные дороги"
+    inn: "7708503727"
+    secid: RU000A10AZ60
+    issue_number: 4B02-38-65045-D-001P
+    issue_name: биржевые облигации процентные неконвертируемые бездокументарные серии 001P-38R
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A10AZ60
+    rating: AAA(RU)
+    rating_agency: АКРА
+    rating_date: 2026-08-13
+    rating_url: https://acra-ratings.ru/ratings/issuers/101/?lang=ru
+  RU000A105FZ9:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26241RMFS8
+    issue_number: 26241RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A105FZ9
+  RU000A1098F3:
+    issuer: Публичное акционерное общество "Акционерная финансовая корпорация "Система"
+    inn: "7703104630"
+    secid: RU000A1098F3
+    issue_number: 4B02-31-01669-A-001P
+    issue_name: Биржевые облигации процентные неконвертируемые бездокументарные серии 001Р-31
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A1098F3
+    rating: ruA+
+    rating_agency: Эксперт РА
+    rating_date: 2026-06-30
+    rating_url: https://www.raexpert.ru/database/securities/bonds/1000058728/
+  RU000A107X96:
+    issuer: государственная корпорация развития "ВЭБ.РФ"
+    inn: "7750004150"
+    secid: RU000A107X96
+    issue_number: 4B02-46-00004-T-002P
+    issue_name: биржевые облигации бездокументарные процентные неконвертируемые с централизованным учетом прав серии ПБО-002Р-40
+    bond_type: Облигация биржевая
+    category: corporate
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A107X96
+    rating: AAA(RU)
+    rating_agency: АКРА
+    rating_date: 2026-03-25
+    rating_url: https://www.acra-ratings.ru/ratings/emissions/1150/?lang=ru
+  RU000A1038Z7:
+    issuer: Министерство финансов Российской Федерации
+    inn: "7710168360"
+    secid: SU26237RMFS6
+    issue_number: 26237RMFS
+    issue_name: облигации федерального займа с постоянным купонным доходом
+    bond_type: Облигация федерального займа
+    category: ofz
+    source_url: https://www.moex.com/ru/listing/securities-cards.aspx?code=RU000A1038Z7
+
+
+

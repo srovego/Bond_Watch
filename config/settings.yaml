@@ -1,0 +1,18 @@
+database: data/bond_watch.db
+log_file: data/bond_watch.log
+http_timeout_seconds: 12
+http_retries: 2
+request_pause_seconds: 0.4
+digest_timezone: Europe/Moscow
+price_threshold_corporate_percent: 3.0
+price_threshold_ofz_percent: 2.0
+news_lookback_days: 3
+sources:
+  cbr_rss: true
+  moex_iss: true
+  e_disclosure: false
+  expert_ra: false
+  acra: false
+  fedresurs: false
+
+

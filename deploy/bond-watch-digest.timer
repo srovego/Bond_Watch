@@ -1,0 +1,15 @@
+[Unit]
+Description=Send Bond Watch digest at Moscow 09:00, 14:00 and 19:00
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Europe/Moscow
+OnCalendar=*-*-* 14:00:00 Europe/Moscow
+OnCalendar=*-*-* 19:00:00 Europe/Moscow
+AccuracySec=1s
+Persistent=true
+Unit=bond-watch-digest.service
+
+[Install]
+WantedBy=timers.target
+
+

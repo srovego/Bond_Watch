@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bond-watch"
+version = "0.1.0"
+description = "MOEX bond portfolio monitoring and Telegram alerts"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27,<1", "PyYAML>=6,<7", "tzdata>=2025.2; platform_system == 'Windows'"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+bond-watch = "bond_watch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+

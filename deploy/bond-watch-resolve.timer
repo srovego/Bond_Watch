@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh MOEX bond metadata daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Europe/Moscow
+Persistent=true
+Unit=bond-watch-resolve.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,18 @@
+[Unit]
+Description=Send scheduled Bond Watch digest
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=bondwatch
+Group=bondwatch
+WorkingDirectory=/opt/bond-watch
+ExecStart=/opt/bond-watch/.venv/bin/bond-watch digest --scheduled
+TimeoutStartSec=2min
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/bond-watch/data
+ReadOnlyPaths=/opt/bond-watch/config
+PrivateTmp=true
+

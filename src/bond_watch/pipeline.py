@@ -13,6 +13,7 @@ from .analysis import ai_analyze, classify, fingerprint, match_issuers
 from .config import load_portfolio, load_verified_bonds
 from .db import utcnow
 from .http import Http
+from .news_sources import classify_event, fetch_cbr_site_rss, fetch_moex_news, is_market_event, match_portfolio
 from .sources import Publication, fetch_bond_price, fetch_cbr_rss, resolve_isin
 from .telegram import Telegram, send_once, format_news
 
@@ -21,6 +22,8 @@ log = logging.getLogger(__name__)
 SOURCE_NAMES = {
     "moex_iss": "Московская биржа ISS",
     "cbr_rss": "Банк России RSS",
+    "cbr_site_rss": "Банк России: новое на сайте",
+    "moex_news": "Московская биржа: новости RSS",
     "e_disclosure": "e-disclosure",
     "expert_ra": "Эксперт РА",
     "acra": "АКРА",
@@ -270,6 +273,84 @@ def poll_news(conn, settings: dict, http: Http) -> None:
     _run(conn, "cbr_rss", action, diagnostics, pass_run_id=True)
 
 
+def ingest_corporate_event(conn, item: Publication, issuer_id: int | None, bond_isins: list[str], scope: str) -> int | None:
+    category, severity = classify_event(item)
+    body = (item.body or item.title)[:800]
+    with conn:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO news(source_id,source_item_id,url,source_name,published_at,discovered_at,
+            title,body,category,severity,fingerprint,analysis_status,event_scope)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,'disabled',?)""",
+            (item.source_id, item.item_id, item.url, item.source_name, item.published_at, utcnow(),
+             item.title, body, category, severity, fingerprint(item) + f":{issuer_id if issuer_id is not None else scope}", scope),
+        )
+        if not cur.rowcount:
+            return None
+        news_id = cur.lastrowid
+        if issuer_id is not None:
+            conn.execute("INSERT INTO news_issuers(news_id,issuer_id) VALUES(?,?)", (news_id, issuer_id))
+        for isin in bond_isins:
+            conn.execute("INSERT INTO news_bonds(news_id,isin) VALUES(?,?)", (news_id, isin))
+    return news_id
+
+
+def poll_corporate_rss(conn, settings: dict, http: Http, source_id: str) -> None:
+    if not settings.get("sources", {}).get(source_id, False):
+        return
+    fetcher = {"cbr_site_rss": fetch_cbr_site_rss, "moex_news": fetch_moex_news}[source_id]
+    diagnostics = {"received": 0, "matched": 0, "saved": 0, "rejected": 0,
+                   "errors": 0, "already_known": 0, "no_portfolio_match": 0,
+                   "ambiguous": 0, "market_events": 0}
+
+    def action(run_id: int):
+        try:
+            items, invalid = fetcher(http, lookback_days=int(settings.get("news_lookback_days", 3)))
+        except Exception:
+            diagnostics["errors"] += 1
+            raise
+        diagnostics["errors"] += invalid
+        diagnostics["rejected"] += invalid
+        issuers = _issuer_rows(conn)
+        for item in items:
+            diagnostics["received"] += 1
+            issuer_id, bond_isins, scope, basis = match_portfolio(item, issuers)
+            if issuer_id is None and scope == "market" and is_market_event(item):
+                diagnostics["market_events"] += 1
+                if ingest_corporate_event(conn, item, None, [], "market") is None:
+                    decision = "already_known"
+                    diagnostics[decision] += 1
+                else:
+                    decision = "saved"
+                    diagnostics[decision] += 1
+            elif issuer_id is None:
+                decision = "ambiguous" if scope == "ambiguous" else "no_portfolio_match"
+                diagnostics[decision] += 1
+                diagnostics["rejected"] += 1
+            else:
+                diagnostics["matched"] += 1
+                if ingest_corporate_event(conn, item, issuer_id, bond_isins, scope) is None:
+                    decision = "already_known"
+                    diagnostics[decision] += 1
+                else:
+                    decision = "saved"
+                    diagnostics[decision] += 1
+            with conn:
+                conn.execute(
+                    """INSERT INTO rss_item_checks(run_id,source_item_id,title,url,published_at,decision,match_ids_json)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (run_id, item.item_id, item.title, item.url, item.published_at,
+                     f"{decision}:{basis}", json.dumps([issuer_id] if issuer_id else [])),
+                )
+        with conn:
+            conn.execute(
+                """DELETE FROM rss_item_checks WHERE run_id IN
+                (SELECT id FROM collector_runs WHERE source_id=? ORDER BY id DESC LIMIT -1 OFFSET 100)""",
+                (source_id,),
+            )
+        return diagnostics["received"]
+    _run(conn, source_id, action, diagnostics, pass_run_id=True)
+
+
 def _price_event(conn, bond, current: dict, previous, change: float) -> None:
     direction = "выросла" if change > 0 else "снизилась"
     title = f"Чистая цена {bond['isin']} {direction} на {abs(change):.2f}%"
@@ -417,6 +498,8 @@ def poll(conn, root: Path, settings: dict) -> None:
     seed_verified_bonds(conn, root)
     with Http(float(settings.get("http_timeout_seconds", 12)), int(settings.get("http_retries", 2))) as http:
         poll_news(conn, settings, http)
+        poll_corporate_rss(conn, settings, http, "cbr_site_rss")
+        poll_corporate_rss(conn, settings, http, "moex_news")
         poll_prices(conn, settings, http)
     send_urgent(conn)
     analyze_pending(conn)

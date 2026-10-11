@@ -9,6 +9,8 @@ price_threshold_ofz_percent: 2.0
 news_lookback_days: 3
 sources:
   cbr_rss: true
+  cbr_site_rss: true
+  moex_news: true
   moex_iss: true
   e_disclosure: false
   expert_ra: false

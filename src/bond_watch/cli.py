@@ -63,6 +63,14 @@ def status(conn) -> None:
     ).fetchone()
     if latest_rss:
         print(f"CBR RSS: received {latest_rss['items_seen']} | diagnostics {latest_rss['rejection_counts_json']}")
+    for source_id in ("cbr_site_rss", "moex_news"):
+        latest = conn.execute(
+            "SELECT items_seen,rejection_counts_json,status,error FROM collector_runs "
+            "WHERE source_id=? ORDER BY id DESC LIMIT 1", (source_id,)
+        ).fetchone()
+        if latest:
+            print(f"{source_id}: {latest['status']} | received {latest['items_seen']} | "
+                  f"diagnostics {latest['rejection_counts_json'] or '{}'} | {latest['error'] or ''}")
     print("Bonds:")
     for row in conn.execute("SELECT b.isin,b.status,b.resolution_error,i.name FROM bonds b LEFT JOIN issuers i ON i.id=b.issuer_id ORDER BY b.isin"):
         print(f"  {row['isin']}: {row['name'] or 'unresolved'} [{row['status']}] {row['resolution_error'] or ''}")
@@ -71,17 +79,17 @@ def status(conn) -> None:
         print(f"  {row['kind']}: {row['status']} {row['created_at']} {row['error'] or ''}")
 
 
-def rss_recent(conn, limit: int) -> None:
+def rss_recent(conn, limit: int, source_id: str = "cbr_rss") -> None:
     run = conn.execute(
         """SELECT r.id,r.started_at,r.status FROM collector_runs r
-        WHERE r.source_id='cbr_rss' AND EXISTS
+        WHERE r.source_id=? AND EXISTS
         (SELECT 1 FROM rss_item_checks c WHERE c.run_id=r.id)
-        ORDER BY r.id DESC LIMIT 1"""
+        ORDER BY r.id DESC LIMIT 1""", (source_id,)
     ).fetchone()
     if not run:
         print("No received RSS headlines are recorded yet.")
         return
-    print(f"CBR RSS run {run['id']} | {run['started_at']} | {run['status']}")
+    print(f"{source_id} run {run['id']} | {run['started_at']} | {run['status']}")
     for item in conn.execute(
         """SELECT title,url,decision,match_ids_json FROM rss_item_checks
         WHERE run_id=? ORDER BY id DESC LIMIT ?""", (run["id"], limit)
@@ -118,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_parser(name)
     recent = sub.add_parser("rss-recent")
     recent.add_argument("--limit", type=int, default=20)
+    recent.add_argument("--source", choices=("cbr_rss", "cbr_site_rss", "moex_news"), default="cbr_rss")
     audit = sub.add_parser("price-audit")
     audit.add_argument("--limit", type=int, default=200)
     digest = sub.add_parser("digest")
@@ -147,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             status(conn)
         elif args.command == "rss-recent":
-            rss_recent(conn, max(1, min(args.limit, 100)))
+            rss_recent(conn, max(1, min(args.limit, 100)), args.source)
         elif args.command == "price-audit":
             price_audit(conn, max(1, args.limit))
         elif args.command == "portfolio":

@@ -96,6 +96,9 @@ MIGRATIONS = [
       match_ids_json TEXT NOT NULL
     );
     CREATE INDEX idx_rss_checks_run ON rss_item_checks(run_id, id);
+    """,
+    """
+    ALTER TABLE news ADD COLUMN event_scope TEXT;
     """
 ]
 

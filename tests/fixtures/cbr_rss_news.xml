@@ -1,0 +1,24 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss version="2.0"><channel><item>
+      <title>Информация о ценных бумагах, принимаемых в обеспечение по кредитам Банка России на 12.10.2026</title>
+      <link>https://www.cbr.ru/hd_base/BankPapers/</link>
+      <guid isPermaLink="false">ID_10072</guid>
+      <description />
+      <pubDate>Sun, 11 Oct 2026 11:51:14 +0300</pubDate>
+      <category>Базы данных</category>
+    </item>
+    <item>
+      <title>Реестр операторов обмена цифровых финансовых активов</title>
+      <link>https://www.cbr.ru/registries/admissionfinmarket/#a_150412</link>
+      <guid isPermaLink="false">ID_35763</guid>
+      <description />
+      <pubDate>Fri, 09 Oct 2026 18:17:52 +0300</pubDate>
+    </item>
+    <item>
+      <title>Решения Банка России в отношении участников финансового рынка</title>
+      <link>https://www.cbr.ru/rbr/rbr_fr/</link>
+      <guid isPermaLink="false">ID_9973</guid>
+      <description />
+      <pubDate>Fri, 09 Oct 2026 17:37:31 +0300</pubDate>
+    </item>
+    </channel></rss>

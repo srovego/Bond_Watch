@@ -81,20 +81,38 @@ def enqueue_poll_alerts(conn, after_news_id: int, recipients: tuple[str, ...]) -
     return queued
 
 
-def enqueue_daily_digest(conn, recipients: tuple[str, ...], *, now: datetime | None = None) -> int:
-    now = now or datetime.now(timezone.utc)
+def daily_slot(now: datetime) -> tuple[str, datetime, datetime] | None:
+    """Accept only the current Moscow slot; never backfill missed timer runs."""
     if now.tzinfo is None:
         raise ValueError("daily digest time must include a timezone")
-    now = now.astimezone(timezone.utc)
-    since = now - timedelta(hours=24)
-    rows = _news_rows(conn, "julianday(COALESCE(n.published_at,n.discovered_at))>=julianday(?) AND julianday(COALESCE(n.published_at,n.discovered_at))<=julianday(?)",
-                      (since.isoformat(timespec="seconds"), now.isoformat(timespec="seconds")))
+    local = now.astimezone(MOSCOW)
+    if 12 <= local.hour < 14:
+        end = local.replace(hour=12, minute=0, second=0, microsecond=0)
+        start = end - timedelta(hours=17)
+        name = "12"
+    elif 19 <= local.hour < 21:
+        end = local.replace(hour=19, minute=0, second=0, microsecond=0)
+        start = end - timedelta(hours=7)
+        name = "19"
+    else:
+        return None
+    return name, start, end
+
+
+def enqueue_daily_digest(conn, recipients: tuple[str, ...], *, now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc)
+    slot = daily_slot(now)
+    if slot is None:
+        return 0
+    name, start, end = slot
+    rows = _news_rows(conn, "julianday(COALESCE(n.published_at,n.discovered_at))>=julianday(?) AND julianday(COALESCE(n.published_at,n.discovered_at))<julianday(?)",
+                      (start.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                       end.astimezone(timezone.utc).isoformat(timespec="seconds")))
     unique = {}
     for row in rows:
         unique.setdefault(_event_key(row), row)
     ordered = sorted(unique.values(), key=lambda r: ({"CRITICAL": 0, "WARNING": 1}.get(r["severity"], 2), -r["id"]))
-    local = now.astimezone(MOSCOW)
-    lines = [f"Bond Watch — события за 24 часа до {local:%d.%m.%Y %H:%M} МСК",
+    lines = [f"Bond Watch — события с {start:%d.%m.%Y %H:%M} до {end:%d.%m.%Y %H:%M} МСК",
              f"Событий: {len(ordered)}"]
     for row in ordered:
         lines.extend(("", _event_body(row)))
@@ -109,23 +127,43 @@ def enqueue_daily_digest(conn, recipients: tuple[str, ...], *, now: datetime | N
     if lines[-1] == "Состояние источников:":
         lines.append("Нет включенных источников")
     body = "\n".join(lines)
-    event_key = f"daily:{local.date().isoformat()}"
+    event_key = f"daily:{end.date().isoformat()}:{name}"
     return sum(_enqueue(conn, kind="email_daily", event_key=event_key, recipient=recipient,
-                        subject=f"Bond Watch — сводка за {local:%d.%m.%Y}", body=body)
+                        subject=f"Bond Watch — сводка {end:%d.%m.%Y} {name}:00 МСК", body=body)
                for recipient in recipients)
 
 
-def deliver_due(conn, config: EmailConfig, *, now: datetime | None = None, limit: int = 50) -> dict[str, int]:
+def deliver_due(conn, config: EmailConfig, *, now: datetime | None = None, limit: int = 50,
+                allow_stale_daily: bool = False, only_id: int | None = None) -> dict[str, int]:
     """Claim each message durably before SMTP. Interrupted attempts stay unresolved."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     stamp = now.isoformat(timespec="seconds")
     counts = {"sent": 0, "retryable": 0, "failed": 0, "uncertain": 0}
+    if not allow_stale_daily:
+        stale = conn.execute(
+            """SELECT id,event_key FROM notifications WHERE kind='email_daily'
+            AND status IN ('pending','retryable')"""
+        ).fetchall()
+        for row in stale:
+            try:
+                _, day, slot_hour = row["event_key"].split(":")
+                end = datetime.fromisoformat(day).replace(tzinfo=MOSCOW, hour=int(slot_hour))
+                expired = now > (end + timedelta(hours=2)).astimezone(timezone.utc)
+            except (AttributeError, ValueError):
+                expired = True
+            if expired:
+                with conn:
+                    conn.execute(
+                        """UPDATE notifications SET status='failed',result='stale_slot',
+                        error='daily slot expired; manual safe retry available'
+                        WHERE id=? AND status IN ('pending','retryable')""", (row["id"],))
     rows = conn.execute(
         """SELECT id FROM notifications WHERE kind IN ('email_urgent','email_daily')
         AND status IN ('pending','retryable')
         AND (next_attempt_at IS NULL OR next_attempt_at<=?)
+        AND (? IS NULL OR id=?)
         ORDER BY CASE kind WHEN 'email_urgent' THEN 0 ELSE 1 END, id LIMIT ?""",
-        (stamp, limit),
+        (stamp, only_id, only_id, limit),
     ).fetchall()
     for candidate in rows:
         # Commit the claim before SMTP; interrupted attempts remain unresolved.
@@ -199,4 +237,4 @@ def retry_safe(conn, config: EmailConfig, notification_id: int | None = None) ->
             WHERE kind IN ('email_urgent','email_daily') AND status IN ('failed','retryable')""" + condition,
             params,
         )
-    return {"requeued": cur.rowcount, **deliver_due(conn, config)}
+    return {"requeued": cur.rowcount, **deliver_due(conn, config, allow_stale_daily=True, only_id=notification_id)}

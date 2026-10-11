@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     choice.add_argument("--all-safe", action="store_true")
     recent = sub.add_parser("rss-recent")
     recent.add_argument("--limit", type=int, default=20)
-    recent.add_argument("--source", choices=("cbr_rss", "cbr_site_rss", "moex_news"), default="cbr_rss")
+    recent.add_argument("--source", choices=("cbr_rss", "cbr_site_rss", "moex_news", "cbr_instruments", "cbr_participants"), default="cbr_rss")
     audit = sub.add_parser("price-audit")
     audit.add_argument("--limit", type=int, default=200)
     digest = sub.add_parser("digest")

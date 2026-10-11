@@ -76,11 +76,14 @@ sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch init-db
 sudo install -m 0644 deploy/bond-watch-email-digest.service deploy/bond-watch-email-digest.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now bond-watch-email-digest.timer
+sudo systemctl restart bond-watch-email-digest.timer
 sudo systemctl list-timers bond-watch-poll.timer bond-watch-email-digest.timer
+systemd-analyze calendar "*-*-* 12:00:00 Europe/Moscow"
+systemd-analyze calendar "*-*-* 19:00:00 Europe/Moscow"
 sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch email-queue --limit 50
 ~~~
 
-`poll` теперь формирует оперативные письма после завершения сбора и запускается существующим таймером каждые 15 минут. Новая служба запускает `bond-watch email-daily` в 19:00 Europe/Moscow. Не запускайте `email-daily` вручную для проверки доставки, если хотите сохранить единственный запланированный выпуск за день; её ключ содержит московскую дату. Для теста соединения используйте `bond-watch check-email`, которая отправляет одно отдельное письмо.
+`poll` теперь формирует оперативные письма после завершения сбора и запускается существующим таймером каждые 15 минут. Служба запускает `bond-watch email-daily` в 12:00 и 19:00 Europe/Moscow. Дневная сводка охватывает [19:00 вчера, 12:00 сегодня), вечерняя — [12:00, 19:00). Ключ содержит московскую дату и слот. Таймер использует `Persistent=false`: пропущенные запуски не догоняются. Команда принимает только текущий слот до двух часов после его времени; залежавшиеся записи очереди помечаются `failed/stale_slot` и не отправляются автоматически. При явном `email-retry --id ID` однозначно неотправленное письмо можно повторить вручную. Не запускайте `email-retry --all-safe` без просмотра очереди, если в ней есть устаревшие сводки. Для теста соединения используйте `bond-watch check-email`, которая отправляет одно отдельное письмо.
 
 Диагностика и безопасное повторение:
 
@@ -93,3 +96,10 @@ sudo journalctl -u bond-watch-poll.service -n 50 --no-pager
 ~~~
 
 `email-retry` принимает только `failed` и `retryable`. Записи `uncertain` и оставшиеся после прерывания `attempting` требуют ручной проверки ящика отправителя и адресата. Автоматически их повторять нельзя: Gmail мог принять письмо до потери соединения. Однозначные временные ошибки соединения, STARTTLS и аутентификации с кодом 4xx повторяются не более трёх раз с интервалами 15 и 30 минут. Постоянные ошибки и исчерпанные попытки остаются `failed`. Ни пароль, ни тело письма команда очереди не печатает.
+
+
+## Решения Банка России: новые RSS
+
+Источники `cbr_instruments` и `cbr_participants` включены в `config/settings.yaml`. Официальные ссылки RSS размещены на [странице решений по инструментам](https://www.cbr.ru/rbr/insideDKO/) и [странице решений по участникам](https://www.cbr.ru/rbr/rbr_fr/): `https://www.cbr.ru/rss/insideDKO` и `https://www.cbr.ru/rss/rbr`. В октябре 2026 оба адреса локально ответили HTTP 200, по 100 элементов. Сеть VPS не проверялась. `poll` использует только эти публичные RSS и проверяет прямую публичную карточку каждого совпавшего решения; при сетевой ошибке статус источника будет `error`. Элементы без достоверной связи ИНН с участником отклоняются. Рутинная регистрация — INFO; WARNING присваивается только явному негативному решению об облигациях или обращению о банкротстве. Публикации старше окна `news_lookback_days` и выпавшие из последних 100 элементов источника могут быть пропущены.
+
+После обновления выполните `bond-watch poll` и проверьте `bond-watch status`, `bond-watch rss-recent --source cbr_instruments`, `bond-watch rss-recent --source cbr_participants`. Эти команды проверяют новый сбор; работающие источники и Gmail SMTP не перенастраиваются.

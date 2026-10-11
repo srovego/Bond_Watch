@@ -9,8 +9,9 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .analysis import ai_analyze, classify, fingerprint, match_issuers
+from .analysis import ai_analyze, classify, fingerprint, match_issuers, normalized
 from .config import load_portfolio, load_verified_bonds
+from .cbr_decisions import fetch_decisions, identify_issuer, classify_decision
 from .db import utcnow
 from .email_notifications import process_poll_email
 from .http import Http
@@ -26,6 +27,8 @@ SOURCE_NAMES = {
     "cbr_rss": "Банк России RSS",
     "cbr_site_rss": "Банк России: новое на сайте",
     "moex_news": "Московская биржа: новости RSS",
+    "cbr_instruments": "Банк России: решения по инструментам",
+    "cbr_participants": "Банк России: решения по участникам",
     "e_disclosure": "e-disclosure",
     "expert_ra": "Эксперт РА",
     "acra": "АКРА",
@@ -359,6 +362,73 @@ def poll_corporate_rss(conn, settings: dict, http: Http, source_id: str) -> None
     _run(conn, source_id, action, diagnostics, pass_run_id=True)
 
 
+
+def poll_cbr_decisions(conn, settings: dict, http: Http, source_id: str) -> None:
+    if not settings.get("sources", {}).get(source_id, False):
+        return
+    diagnostics = {"received": 0, "matched": 0, "saved": 0, "rejected": 0,
+                   "already_known": 0, "errors": 0}
+
+    def action(run_id: int):
+        decisions, invalid = fetch_decisions(http, source_id,
+                                             lookback_days=int(settings.get("news_lookback_days", 3)))
+        diagnostics["errors"] += invalid
+        diagnostics["rejected"] += invalid
+        issuers = _issuer_rows(conn)
+        for decision in decisions:
+            item = decision.publication
+            diagnostics["received"] += 1
+            issuer = identify_issuer(decision, issuers)
+            if issuer is None:
+                outcome = "unverified_subject"
+                diagnostics["rejected"] += 1
+            else:
+                diagnostics["matched"] += 1
+                # The GUID-to-document mapping is verified against the public site;
+                # confirm the actual primary page before storing a new match.
+                existing = conn.execute(
+                    """SELECT n.url,n.body FROM news n JOIN news_issuers ni ON ni.news_id=n.id
+                    WHERE ni.issuer_id=? AND n.source_id IN
+                    ('cbr_rss','cbr_site_rss','cbr_instruments','cbr_participants')""",
+                    (issuer["id"],),
+                ).fetchall()
+                if any(row["url"].lower() == item.url.lower() or
+                       (normalized(row["body"] or "") and
+                        normalized(row["body"] or "") == normalized(item.body))
+                       for row in existing):
+                    outcome = "already_known"
+                    diagnostics[outcome] += 1
+                else:
+                    http.get(item.url)
+                    title = f"{decision.decision_type}: {item.title}"
+                    publication = Publication(item.source_id, item.item_id, item.url, item.source_name,
+                                              item.published_at, title[:500], item.body)
+                    match = Match(issuer["id"], "issuer", (),
+                                  tuple(issuer["isins"]), f"cbr_rss:subject_inn:{decision.subject_inn}",
+                                  "matched")
+                    category, severity, basis = classify_decision(decision)
+                    if ingest_corporate_event(conn, publication, match, category, severity, basis) is None:
+                        outcome = "already_known"
+                    else:
+                        outcome = "saved"
+                    diagnostics[outcome] += 1
+            with conn:
+                conn.execute(
+                    """INSERT INTO rss_item_checks(run_id,source_item_id,title,url,published_at,decision,match_ids_json)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (run_id, item.item_id, item.title, item.url, item.published_at, outcome,
+                     json.dumps([issuer["id"]] if issuer else [])),
+                )
+        with conn:
+            conn.execute(
+                """DELETE FROM rss_item_checks WHERE run_id IN
+                (SELECT id FROM collector_runs WHERE source_id=? ORDER BY id DESC LIMIT -1 OFFSET 100)""",
+                (source_id,),
+            )
+        return diagnostics["received"]
+    _run(conn, source_id, action, diagnostics, pass_run_id=True)
+
+
 def _price_event(conn, bond, current: dict, previous, change: float) -> None:
     direction = "выросла" if change > 0 else "снизилась"
     title = f"Чистая цена {bond['isin']} {direction} на {abs(change):.2f}%"
@@ -510,6 +580,8 @@ def poll(conn, root: Path, settings: dict) -> None:
         poll_news(conn, settings, http)
         poll_corporate_rss(conn, settings, http, "cbr_site_rss")
         poll_corporate_rss(conn, settings, http, "moex_news")
+        poll_cbr_decisions(conn, settings, http, "cbr_instruments")
+        poll_cbr_decisions(conn, settings, http, "cbr_participants")
         poll_prices(conn, settings, http)
     send_urgent(conn)
     analyze_pending(conn)

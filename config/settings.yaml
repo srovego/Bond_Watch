@@ -12,6 +12,8 @@ sources:
   cbr_site_rss: true
   moex_news: true
   moex_iss: true
+  cbr_instruments: true
+  cbr_participants: true
   e_disclosure: false
   expert_ra: false
   acra: false

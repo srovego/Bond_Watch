@@ -99,7 +99,7 @@ def test_daily_24h_sources_and_deduped_moscow_day(tmp_path, monkeypatch):
     assert 'https://www.moex.com/fresh' in row['body']
     assert 'https://www.moex.com/old' not in row['body']
     assert 'CBR: error' in row['body'] and 'MOEX: ok' in row['body']
-    assert row['event_key'] == 'daily:2026-10-12'
+    assert row['event_key'] == 'daily:2026-10-12:19'
     conn.close()
 
 
@@ -190,7 +190,8 @@ def test_systemd_daily_timer_is_moscow_only():
     timer = (root / 'deploy' / 'bond-watch-email-digest.timer').read_text(encoding='utf-8-sig')
     service = (root / 'deploy' / 'bond-watch-email-digest.service').read_text(encoding='utf-8-sig')
     assert 'OnCalendar=*-*-* 19:00:00 Europe/Moscow' in timer
-    assert 'Persistent=true' in timer
+    assert 'OnCalendar=*-*-* 12:00:00 Europe/Moscow' in timer
+    assert 'Persistent=false' in timer
     assert 'ExecStart=/opt/bond-watch/.venv/bin/bond-watch email-daily' in service
 
 
@@ -205,4 +206,63 @@ def test_interrupted_auto_attempt_stays_for_manual_review(tmp_path, monkeypatch)
     assert conn.execute('SELECT status,attempt_count FROM notifications').fetchone()['status'] == 'attempting'
     assert deliver_due(conn, config())['sent'] == 0
     assert retry_safe(conn, config(), 1)['requeued'] == 0
+    conn.close()
+
+
+def test_two_daily_slots_have_disjoint_boundaries_and_keys(tmp_path):
+    conn, issuer = setup_db(tmp_path)
+    news(conn, issuer, 'night', published='2026-10-11T16:00:00+00:00')
+    news(conn, issuer, 'boundary', published='2026-10-12T09:00:00+00:00')
+    news(conn, issuer, 'evening', published='2026-10-12T15:59:59+00:00')
+    noon = datetime(2026, 10, 12, 9, 5, tzinfo=timezone.utc)
+    evening = datetime(2026, 10, 12, 16, 5, tzinfo=timezone.utc)
+    assert enqueue_daily_digest(conn, config().recipients, now=noon) == 1
+    assert enqueue_daily_digest(conn, config().recipients, now=noon) == 0
+    assert enqueue_daily_digest(conn, config().recipients, now=evening) == 1
+    rows = {r['event_key']: r['body'] for r in conn.execute(
+        "SELECT event_key,body FROM notifications WHERE kind='email_daily'")}
+    assert set(rows) == {'daily:2026-10-12:12', 'daily:2026-10-12:19'}
+    assert '/night' in rows['daily:2026-10-12:12']
+    assert '/boundary' not in rows['daily:2026-10-12:12']
+    assert '/boundary' in rows['daily:2026-10-12:19']
+    assert '/evening' in rows['daily:2026-10-12:19']
+    assert '/night' not in rows['daily:2026-10-12:19']
+    conn.close()
+
+
+def test_missed_slot_not_backfilled_and_manual_safe_retry(tmp_path, monkeypatch):
+    conn, issuer = setup_db(tmp_path)
+    news(conn, issuer, 'event', published='2026-10-12T08:00:00+00:00')
+    noon = datetime(2026, 10, 12, 9, 5, tzinfo=timezone.utc)
+    assert enqueue_daily_digest(conn, config().recipients, now=noon) == 1
+    late = datetime(2026, 10, 13, 9, 5, tzinfo=timezone.utc)
+    sent = []
+    monkeypatch.setattr('bond_watch.email_notifications.send_email',
+                        lambda *args: sent.append(args))
+    assert deliver_due(conn, config(), now=late)['sent'] == 0
+    row = conn.execute("SELECT id,status,result FROM notifications WHERE kind='email_daily'").fetchone()
+    assert row['status'] == 'failed' and row['result'] == 'stale_slot'
+    assert retry_safe(conn, config(), row['id'])['sent'] == 1
+    assert len(sent) == 1
+    assert enqueue_daily_digest(conn, config().recipients,
+                                now=datetime(2026, 10, 13, 14, tzinfo=timezone.utc)) == 0
+    conn.close()
+
+
+def test_targeted_safe_retry_does_not_send_other_pending_mail(tmp_path, monkeypatch):
+    conn, issuer = setup_db(tmp_path)
+    news(conn, issuer, 'one', published='2026-10-12T08:00:00+00:00')
+    noon = datetime(2026, 10, 12, 9, 5, tzinfo=timezone.utc)
+    enqueue_daily_digest(conn, ('a@example.com', 'b@example.com'), now=noon)
+    with conn:
+        conn.execute("UPDATE notifications SET status='failed' WHERE recipient='a@example.com'")
+    target = conn.execute(
+        "SELECT id FROM notifications WHERE recipient='a@example.com'").fetchone()[0]
+    sent = []
+    monkeypatch.setattr('bond_watch.email_notifications.send_email',
+                        lambda cfg, subject, body: sent.append(cfg.recipients))
+    result = retry_safe(conn, config(('a@example.com', 'b@example.com')), target)
+    assert result['sent'] == 1 and sent == [('a@example.com',)]
+    assert conn.execute(
+        "SELECT status FROM notifications WHERE recipient='b@example.com'").fetchone()[0] == 'pending'
     conn.close()

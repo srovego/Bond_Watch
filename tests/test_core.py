@@ -347,7 +347,7 @@ def test_verified_ratings_are_seeded_with_provenance(tmp_path):
     conn = connect(tmp_path / "ratings.sqlite")
     sync_portfolio(conn, project_root())
     seed_verified_bonds(conn, project_root())
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
     assert conn.execute("SELECT count(*) FROM bonds WHERE rating IS NOT NULL AND rating_url IS NOT NULL AND rating_date IS NOT NULL").fetchone()[0] == 6
     assert conn.execute("SELECT rating FROM bonds WHERE isin='RU000A1090N4'").fetchone()[0] is None
 
@@ -401,7 +401,7 @@ def test_price_diagnostics_migrate_existing_database(tmp_path):
         raw.executescript(migration + f"\nPRAGMA user_version={index};")
     raw.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
     assert "rejection_counts_json" in [row[1] for row in conn.execute("PRAGMA table_info(collector_runs)")]
 
 
@@ -426,7 +426,7 @@ def test_existing_v4_database_migrates_trade_moment_and_rss_checks(tmp_path):
         raw.executescript(migration + f"\nPRAGMA user_version={index};")
     raw.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
     assert "trade_moment" in [row[1] for row in conn.execute("PRAGMA table_info(price_observations)")]
     assert conn.execute("SELECT count(*) FROM rss_item_checks").fetchone()[0] == 0
 

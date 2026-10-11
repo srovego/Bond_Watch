@@ -1,0 +1,11 @@
+[Unit]
+Description=Send Bond Watch email digest at 19:00 Moscow
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 Europe/Moscow
+AccuracySec=1s
+Persistent=true
+Unit=bond-watch-email-digest.service
+
+[Install]
+WantedBy=timers.target

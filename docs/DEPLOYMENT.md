@@ -44,7 +44,7 @@ sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch digest --email
 sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch status
 ~~~
 
-`check-email` отправляет одно тестовое письмо при каждом явном запуске. `digest --email` отправляет текущую сводку вручную и записывает попытку в существующую таблицу `notifications`. Повтор с тем же содержимым и адресатами после статуса `sent` или `uncertain` не отправляет письмо; при `uncertain` сначала проверьте почтовый ящик и журнал. Ошибку подключения, STARTTLS или входа можно исправить и повторить. Расписание Telegram не изменено, автоматический email-таймер не добавлен.
+`check-email` отправляет одно тестовое письмо при каждом явном запуске. `digest --email` отправляет текущую сводку вручную и записывает попытку в существующую таблицу `notifications`. Повтор с тем же содержимым и адресатами после статуса `sent` или `uncertain` не отправляет письмо; при `uncertain` сначала проверьте почтовый ящик и журнал. Ошибку подключения, STARTTLS или входа можно исправить и повторить. Расписание Telegram не изменено. Автоматический email-таймер описан ниже.
 
 ## Включение
 
@@ -62,3 +62,34 @@ sudo journalctl -u bond-watch-poll.service -n 50 --no-pager
 Для тестовой отправки после настройки токена используйте одну ручную команду `sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch digest`; она отправит текущую сводку. Резервная копия: `sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch backup`. Внешнее копирование файлов из data/backups настройте средствами VPS. Проверяйте состояние `notifications` при сетевых таймаутах Telegram: статус uncertain автоматически не пересылается во избежание дубля.
 
 
+
+## Автоматические email-уведомления: обновление действующего VPS
+
+Команды выполняются на VPS оператором, владеющим checkout `/opt/bond-watch`; в этой задаче соединение с VPS не устанавливалось. Перед обновлением сделайте резервную копию SQLite. Существующие `.env`, база и `bond-watch-poll.timer` сохраняются. После обновления кода `init-db` добавит поля очереди миграцией без удаления прежних уведомлений.
+
+~~~bash
+cd /opt/bond-watch
+git pull --ff-only origin main
+sudo /opt/bond-watch/.venv/bin/pip install -e /opt/bond-watch
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch backup
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch init-db
+sudo install -m 0644 deploy/bond-watch-email-digest.service deploy/bond-watch-email-digest.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bond-watch-email-digest.timer
+sudo systemctl list-timers bond-watch-poll.timer bond-watch-email-digest.timer
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch email-queue --limit 50
+~~~
+
+`poll` теперь формирует оперативные письма после завершения сбора и запускается существующим таймером каждые 15 минут. Новая служба запускает `bond-watch email-daily` в 19:00 Europe/Moscow. Не запускайте `email-daily` вручную для проверки доставки, если хотите сохранить единственный запланированный выпуск за день; её ключ содержит московскую дату. Для теста соединения используйте `bond-watch check-email`, которая отправляет одно отдельное письмо.
+
+Диагностика и безопасное повторение:
+
+~~~bash
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch email-queue --limit 100
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch email-retry --id 123
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch email-retry --all-safe
+sudo journalctl -u bond-watch-email-digest.service -n 50 --no-pager
+sudo journalctl -u bond-watch-poll.service -n 50 --no-pager
+~~~
+
+`email-retry` принимает только `failed` и `retryable`. Записи `uncertain` и оставшиеся после прерывания `attempting` требуют ручной проверки ящика отправителя и адресата. Автоматически их повторять нельзя: Gmail мог принять письмо до потери соединения. Однозначные временные ошибки соединения, STARTTLS и аутентификации с кодом 4xx повторяются не более трёх раз с интервалами 15 и 30 минут. Постоянные ошибки и исчерпанные попытки остаются `failed`. Ни пароль, ни тело письма команда очереди не печатает.

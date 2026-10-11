@@ -158,3 +158,14 @@ def test_partial_recipient_failure_is_uncertain(tmp_path, smtp_env):
         send_digest_once(conn, EmailConfig.from_env(), "Письмо")
     assert conn.execute("SELECT status FROM notifications").fetchone()[0] == "uncertain"
     conn.close()
+
+
+def test_temporary_auth_error_is_retryable_before_delivery(smtp_env, monkeypatch):
+    class TemporaryAuthSMTP(FakeSMTP):
+        def login(self, username, password):
+            raise smtplib.SMTPAuthenticationError(454, b'temporary unavailable')
+    monkeypatch.setattr('bond_watch.email_sender.smtplib.SMTP', TemporaryAuthSMTP)
+    with pytest.raises(EmailDeliveryError) as raised:
+        send_email(EmailConfig.from_env(), TEST_SUBJECT, 'test')
+    assert raised.value.retryable and not raised.value.uncertain
+    assert 'dummy-secret' not in str(raised.value)

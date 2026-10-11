@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from .config import load_env, load_portfolio, load_settings, project_root
 from .db import backup, connect, utcnow
 from .email_sender import EmailConfig, TEST_SUBJECT, send_digest_once, send_email
+from .email_notifications import process_daily_email, retry_safe
 from .http import Http
 from .pipeline import init_sources, poll, resolve_portfolio, sync_portfolio, seed_verified_bonds
 from .telegram import Telegram, digest_parts, run_bot, send_once
@@ -127,8 +128,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bond-watch")
     parser.add_argument("--root", type=Path, default=project_root())
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init-db", "resolve", "poll", "status", "portfolio", "bot", "backup", "check-telegram", "check-email"):
+    for name in ("init-db", "resolve", "poll", "status", "portfolio", "bot", "backup", "check-telegram", "check-email", "email-daily"):
         sub.add_parser(name)
+    queue = sub.add_parser("email-queue")
+    queue.add_argument("--limit", type=int, default=50)
+    retry = sub.add_parser("email-retry")
+    choice = retry.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--id", type=int)
+    choice.add_argument("--all-safe", action="store_true")
     recent = sub.add_parser("rss-recent")
     recent.add_argument("--limit", type=int, default=20)
     recent.add_argument("--source", choices=("cbr_rss", "cbr_site_rss", "moex_news"), default="cbr_rss")
@@ -167,6 +174,13 @@ def main(argv: list[str] | None = None) -> int:
             send_digest(conn, settings, args.scheduled, args.dry_run, args.email)
         elif args.command == "status":
             status(conn)
+        elif args.command == "email-daily":
+            print(process_daily_email(conn))
+        elif args.command == "email-queue":
+            for row in conn.execute("SELECT id,kind,event_key,recipient,status,attempt_count,last_attempt_at,next_attempt_at,result FROM notifications WHERE kind IN ('email_urgent','email_daily') ORDER BY id DESC LIMIT ?", (max(1, min(args.limit, 500)),)):
+                print(" | ".join(str(row[key] or "-") for key in row.keys()))
+        elif args.command == "email-retry":
+            print(retry_safe(conn, EmailConfig.from_env(), args.id))
         elif args.command == "rss-recent":
             rss_recent(conn, max(1, min(args.limit, 100)), args.source)
         elif args.command == "price-audit":

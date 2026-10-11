@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from .analysis import ai_analyze, classify, fingerprint, match_issuers
 from .config import load_portfolio, load_verified_bonds
 from .db import utcnow
+from .email_notifications import process_poll_email
 from .http import Http
 from .news_sources import fetch_cbr_site_rss, fetch_moex_news
 from .issuer_news import Match, classify_credit_event, event_date_from_title, match_issuer_news, sync_related_companies
@@ -500,6 +501,7 @@ def send_urgent(conn) -> None:
 
 
 def poll(conn, root: Path, settings: dict) -> None:
+    news_before = conn.execute("SELECT COALESCE(MAX(id),0) FROM news").fetchone()[0]
     init_sources(conn, settings)
     sync_portfolio(conn, root)
     seed_verified_bonds(conn, root)
@@ -511,6 +513,7 @@ def poll(conn, root: Path, settings: dict) -> None:
         poll_prices(conn, settings, http)
     send_urgent(conn)
     analyze_pending(conn)
+    process_poll_email(conn, news_before)
 
 
 

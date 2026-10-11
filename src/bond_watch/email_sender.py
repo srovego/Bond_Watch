@@ -17,8 +17,9 @@ DIGEST_SUBJECT = "Bond Watch — сводка"
 
 
 class EmailDeliveryError(RuntimeError):
-    def __init__(self, stage: str, *, uncertain: bool = False):
+    def __init__(self, stage: str, *, uncertain: bool = False, retryable: bool = False):
         self.uncertain = uncertain
+        self.retryable = retryable
         super().__init__(f"SMTP {stage} failed; delivery {'uncertain' if uncertain else 'not started'}")
 
 
@@ -76,7 +77,13 @@ def send_email(config: EmailConfig, subject: str, body: str) -> None:
                 raise EmailDeliveryError("partial delivery", uncertain=True)
     except (smtplib.SMTPException, OSError, TimeoutError) as exc:
         # Never expose SMTP credentials or server responses in logs or SQLite.
-        raise EmailDeliveryError(stage, uncertain=stage == "delivery") from None
+        uncertain = stage == "delivery"
+        smtp_code = getattr(exc, "smtp_code", None)
+        retryable = not uncertain and (
+            isinstance(exc, (OSError, TimeoutError))
+            or isinstance(smtp_code, int) and 400 <= smtp_code < 500
+        )
+        raise EmailDeliveryError(stage, uncertain=uncertain, retryable=retryable) from None
 
 
 def send_digest_once(conn, config: EmailConfig, body: str) -> bool:

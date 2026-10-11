@@ -120,6 +120,20 @@ MIGRATIONS = [
       enabled INTEGER NOT NULL DEFAULT 1
     );
     CREATE INDEX idx_related_parent ON related_companies(parent_issuer_id);
+    """,
+    """
+    ALTER TABLE notifications ADD COLUMN event_key TEXT;
+    ALTER TABLE notifications ADD COLUMN recipient TEXT;
+    ALTER TABLE notifications ADD COLUMN subject TEXT;
+    ALTER TABLE notifications ADD COLUMN body TEXT;
+    ALTER TABLE notifications ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE notifications ADD COLUMN last_attempt_at TEXT;
+    ALTER TABLE notifications ADD COLUMN next_attempt_at TEXT;
+    ALTER TABLE notifications ADD COLUMN result TEXT;
+    CREATE UNIQUE INDEX idx_email_notification_event_recipient
+      ON notifications(kind,event_key,recipient)
+      WHERE event_key IS NOT NULL AND recipient IS NOT NULL;
+    CREATE INDEX idx_email_notification_due ON notifications(kind,status,next_attempt_at);
     """
 ]
 

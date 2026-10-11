@@ -113,7 +113,7 @@ def test_v5_database_migrates_without_deleting_news(tmp_path):
     raw.commit()
     raw.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
     row = conn.execute("SELECT title,event_scope,relation_type FROM news").fetchone()
     assert row["title"] == "Old" and row["event_scope"] is None and row["relation_type"] is None
     conn.close()

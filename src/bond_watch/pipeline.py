@@ -13,7 +13,8 @@ from .analysis import ai_analyze, classify, fingerprint, match_issuers
 from .config import load_portfolio, load_verified_bonds
 from .db import utcnow
 from .http import Http
-from .news_sources import classify_event, fetch_cbr_site_rss, fetch_moex_news, is_market_event, match_portfolio
+from .news_sources import fetch_cbr_site_rss, fetch_moex_news
+from .issuer_news import Match, classify_credit_event, event_date_from_title, match_issuer_news, sync_related_companies
 from .sources import Publication, fetch_bond_price, fetch_cbr_rss, resolve_isin
 from .telegram import Telegram, send_once, format_news
 
@@ -273,23 +274,26 @@ def poll_news(conn, settings: dict, http: Http) -> None:
     _run(conn, "cbr_rss", action, diagnostics, pass_run_id=True)
 
 
-def ingest_corporate_event(conn, item: Publication, issuer_id: int | None, bond_isins: list[str], scope: str) -> int | None:
-    category, severity = classify_event(item)
+def ingest_corporate_event(conn, item: Publication, match: Match,
+                           category: str, severity: str, basis: str) -> int | None:
     body = (item.body or item.title)[:800]
     with conn:
         cur = conn.execute(
             """INSERT OR IGNORE INTO news(source_id,source_item_id,url,source_name,published_at,discovered_at,
-            title,body,category,severity,fingerprint,analysis_status,event_scope)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,'disabled',?)""",
+            title,body,category,severity,fingerprint,analysis_status,event_scope,relation_type,
+            mentioned_isin,mentioned_isins_json,portfolio_isins_json,confirmation_source,event_date,classification_basis)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,'disabled',?,?,?,?,?,?,?,?)""",
             (item.source_id, item.item_id, item.url, item.source_name, item.published_at, utcnow(),
-             item.title, body, category, severity, fingerprint(item) + f":{issuer_id if issuer_id is not None else scope}", scope),
+             item.title, body, category, severity, fingerprint(item) + f":{match.issuer_id}",
+             match.relation, match.relation, match.mentioned_isins[0] if match.mentioned_isins else None,
+             json.dumps(match.mentioned_isins), json.dumps(match.portfolio_isins), match.confirmation,
+             event_date_from_title(item.title), basis),
         )
         if not cur.rowcount:
             return None
         news_id = cur.lastrowid
-        if issuer_id is not None:
-            conn.execute("INSERT INTO news_issuers(news_id,issuer_id) VALUES(?,?)", (news_id, issuer_id))
-        for isin in bond_isins:
+        conn.execute("INSERT INTO news_issuers(news_id,issuer_id) VALUES(?,?)", (news_id, match.issuer_id))
+        for isin in match.portfolio_isins:
             conn.execute("INSERT INTO news_bonds(news_id,isin) VALUES(?,?)", (news_id, isin))
     return news_id
 
@@ -299,8 +303,10 @@ def poll_corporate_rss(conn, settings: dict, http: Http, source_id: str) -> None
         return
     fetcher = {"cbr_site_rss": fetch_cbr_site_rss, "moex_news": fetch_moex_news}[source_id]
     diagnostics = {"received": 0, "matched": 0, "saved": 0, "rejected": 0,
-                   "errors": 0, "already_known": 0, "no_portfolio_match": 0,
-                   "ambiguous": 0, "market_events": 0}
+                   "errors": 0, "already_known": 0, "issuer": 0,
+                   "related_bond": 0, "related_company": 0,
+                   "technical_excluded": 0, "not_credit_relevant": 0}
+    budget = {"used": 0, "limit": max(0, int(settings.get("related_isin_lookup_limit", 8)))}
 
     def action(run_id: int):
         try:
@@ -313,22 +319,22 @@ def poll_corporate_rss(conn, settings: dict, http: Http, source_id: str) -> None
         issuers = _issuer_rows(conn)
         for item in items:
             diagnostics["received"] += 1
-            issuer_id, bond_isins, scope, basis = match_portfolio(item, issuers)
-            if issuer_id is None and scope == "market" and is_market_event(item):
-                diagnostics["market_events"] += 1
-                if ingest_corporate_event(conn, item, None, [], "market") is None:
-                    decision = "already_known"
-                    diagnostics[decision] += 1
-                else:
-                    decision = "saved"
-                    diagnostics[decision] += 1
-            elif issuer_id is None:
-                decision = "ambiguous" if scope == "ambiguous" else "no_portfolio_match"
-                diagnostics[decision] += 1
+            match = match_issuer_news(conn, item, issuers, http, budget)
+            if match.issuer_id is None:
+                decision = match.reason
+                diagnostics[decision] = diagnostics.get(decision, 0) + 1
                 diagnostics["rejected"] += 1
+                if decision == "moex_iss_unverified":
+                    diagnostics["errors"] += 1
             else:
                 diagnostics["matched"] += 1
-                if ingest_corporate_event(conn, item, issuer_id, bond_isins, scope) is None:
+                diagnostics[match.relation] += 1
+                category, severity, basis = classify_credit_event(item, match)
+                if category is None:
+                    decision = "technical_excluded" if basis == "technical_market_notice" else basis
+                    diagnostics[decision] += 1
+                    diagnostics["rejected"] += 1
+                elif ingest_corporate_event(conn, item, match, category, severity, basis) is None:
                     decision = "already_known"
                     diagnostics[decision] += 1
                 else:
@@ -339,7 +345,8 @@ def poll_corporate_rss(conn, settings: dict, http: Http, source_id: str) -> None
                     """INSERT INTO rss_item_checks(run_id,source_item_id,title,url,published_at,decision,match_ids_json)
                     VALUES(?,?,?,?,?,?,?)""",
                     (run_id, item.item_id, item.title, item.url, item.published_at,
-                     f"{decision}:{basis}", json.dumps([issuer_id] if issuer_id else [])),
+                     f"{decision}:{match.relation or match.reason}",
+                     json.dumps([match.issuer_id] if match.issuer_id else [])),
                 )
         with conn:
             conn.execute(
@@ -496,6 +503,7 @@ def poll(conn, root: Path, settings: dict) -> None:
     init_sources(conn, settings)
     sync_portfolio(conn, root)
     seed_verified_bonds(conn, root)
+    sync_related_companies(conn, root)
     with Http(float(settings.get("http_timeout_seconds", 12)), int(settings.get("http_retries", 2))) as http:
         poll_news(conn, settings, http)
         poll_corporate_rss(conn, settings, http, "cbr_site_rss")

@@ -99,6 +99,27 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE news ADD COLUMN event_scope TEXT;
+    """,
+    """
+    ALTER TABLE news ADD COLUMN relation_type TEXT;
+    ALTER TABLE news ADD COLUMN mentioned_isin TEXT;
+    ALTER TABLE news ADD COLUMN mentioned_isins_json TEXT;
+    ALTER TABLE news ADD COLUMN portfolio_isins_json TEXT;
+    ALTER TABLE news ADD COLUMN confirmation_source TEXT;
+    ALTER TABLE news ADD COLUMN event_date TEXT;
+    ALTER TABLE news ADD COLUMN classification_basis TEXT;
+    CREATE TABLE isin_issuer_cache (
+      isin TEXT PRIMARY KEY, issuer_inn TEXT, moex_id TEXT,
+      status TEXT NOT NULL, verified_at TEXT NOT NULL,
+      source_url TEXT, error TEXT
+    );
+    CREATE TABLE related_companies (
+      inn TEXT PRIMARY KEY, name TEXT NOT NULL,
+      parent_issuer_id INTEGER NOT NULL REFERENCES issuers(id),
+      aliases_json TEXT NOT NULL, evidence_url TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX idx_related_parent ON related_companies(parent_issuer_id);
     """
 ]
 

@@ -62,16 +62,16 @@ def test_poll_real_feed_rejections_and_issue_persistence(tmp_path, monkeypatch):
     run = conn.execute("SELECT * FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
     assert run["status"] == "ok" and run["items_seen"] == 3
     assert conn.execute("SELECT count(*) FROM news").fetchone()[0] == 0
-    assert conn.execute("SELECT count(*) FROM rss_item_checks WHERE decision LIKE 'no_portfolio_match:%'").fetchone()[0] == 3
+    assert conn.execute("SELECT count(*) FROM rss_item_checks WHERE decision LIKE 'no_issuer_match:%'").fetchone()[0] == 3
 
-    xml = b"<rss><channel><item><title>RU000A1095W4 trading notice</title><link>https://www.moex.com/n1</link><guid>x1</guid><pubDate>Sun, 11 Oct 2026 11:51:14 +0300</pubDate></item></channel></rss>"
+    xml = ("<rss><channel><item><title>RU000A1095W4: финансовые результаты</title><link>https://www.moex.com/n1</link><guid>x1</guid><pubDate>Sun, 11 Oct 2026 11:51:14 +0300</pubDate></item></channel></rss>").encode("utf-8")
     class MoexHttp:
         def get(self, *_args):
             return type("Reply", (), {"content": xml})()
     poll_corporate_rss(conn, settings, MoexHttp(), "moex_news")
     poll_corporate_rss(conn, settings, MoexHttp(), "moex_news")
     news = conn.execute("SELECT * FROM news").fetchall()
-    assert len(news) == 1 and news[0]["event_scope"] == "issue"
+    assert len(news) == 1 and news[0]["relation_type"] == "related_bond"
     assert conn.execute("SELECT isin FROM news_bonds").fetchone()[0] == "RU000A1095W4"
     assert conn.execute("SELECT count(*) FROM news_issuers").fetchone()[0] == 1
     runs = conn.execute("SELECT rejection_counts_json FROM collector_runs WHERE source_id='moex_news' ORDER BY id").fetchall()
@@ -113,7 +113,7 @@ def test_v5_database_migrates_without_deleting_news(tmp_path):
     raw.commit()
     raw.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
-    row = conn.execute("SELECT title,event_scope FROM news").fetchone()
-    assert row["title"] == "Old" and row["event_scope"] is None
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    row = conn.execute("SELECT title,event_scope,relation_type FROM news").fetchone()
+    assert row["title"] == "Old" and row["event_scope"] is None and row["relation_type"] is None
     conn.close()

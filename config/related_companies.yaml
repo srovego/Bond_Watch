@@ -1,0 +1,3 @@
+# Add only legal entities with a verified parent relationship and primary evidence URL.
+# Example fields: inn, name, parent_inn, aliases, evidence_url, enabled.
+companies: []

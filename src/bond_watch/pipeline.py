@@ -7,6 +7,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .analysis import ai_analyze, classify, fingerprint, match_issuers
 from .config import load_portfolio, load_verified_bonds
@@ -93,18 +94,18 @@ def seed_verified_bonds(conn, root: Path) -> None:
                      data.get("rating_status"), isin, str(data["rating_date"])),
                 )
 
-def _run(conn, source_id: str, action, diagnostics: dict[str, int] | None = None):
+def _run(conn, source_id: str, action, diagnostics: dict[str, int] | None = None, *, pass_run_id: bool = False):
     started = utcnow()
     with conn:
         cur = conn.execute("INSERT INTO collector_runs(source_id,started_at,status) VALUES(?,?,?)", (source_id, started, "running"))
     try:
-        count = action()
+        count = action(cur.lastrowid) if pass_run_id else action()
     except Exception as exc:
         log.exception("%s collection failed", source_id)
         with conn:
             conn.execute(
                 "UPDATE collector_runs SET finished_at=?,status='error',error=?,items_seen=?,rejection_counts_json=? WHERE id=?",
-                (utcnow(), str(exc)[:500], (diagnostics or {}).get("accepted", 0),
+                (utcnow(), str(exc)[:500], (diagnostics or {}).get("received", (diagnostics or {}).get("accepted", 0)),
                  json.dumps(diagnostics, ensure_ascii=False) if diagnostics is not None else None, cur.lastrowid),
             )
             conn.execute("UPDATE sources SET status='error',last_error=? WHERE id=?", (str(exc)[:500], source_id))
@@ -169,9 +170,9 @@ def _issuer_rows(conn) -> list[dict]:
     return [dict(r) | {"isins": [b["isin"] for b in conn.execute("SELECT isin FROM bonds WHERE issuer_id=?", (r["id"],))]} for r in conn.execute("SELECT id,name,inn,category FROM issuers WHERE status='verified'")]
 
 
-def ingest_publication(conn, item: Publication) -> int | None:
-    issuer_ids = match_issuers(item, _issuer_rows(conn))
-    if not issuer_ids:
+def ingest_publication(conn, item: Publication, issuer_ids: list[int] | None = None) -> int | None:
+    issuer_ids = match_issuers(item, _issuer_rows(conn)) if issuer_ids is None else issuer_ids
+    if len(issuer_ids) != 1:
         return None
     category, severity = classify(item)
     fp = fingerprint(item) + ":" + ",".join(map(str, sorted(issuer_ids)))
@@ -227,12 +228,46 @@ def analyze_pending(conn) -> None:
 def poll_news(conn, settings: dict, http: Http) -> None:
     if not settings.get("sources", {}).get("cbr_rss", True):
         return
-    def action():
+    diagnostics = {"received": 0, "already_known": 0, "no_issuer_match": 0,
+                   "ambiguous_issuer_match": 0, "saved_new": 0}
+
+    def action(run_id: int):
         publications = fetch_cbr_rss(http, lookback_days=int(settings.get("news_lookback_days", 3)))
+        issuers = _issuer_rows(conn)
         for item in publications:
-            ingest_publication(conn, item)
-        return len(publications)
-    _run(conn, "cbr_rss", action)
+            diagnostics["received"] += 1
+            existing = conn.execute(
+                "SELECT id FROM news WHERE source_id=? AND source_item_id=?",
+                (item.source_id, item.item_id),
+            ).fetchone()
+            issuer_ids: list[int] = []
+            if existing:
+                decision = "already_known"
+            else:
+                issuer_ids = match_issuers(item, issuers)
+                if not issuer_ids:
+                    decision = "no_issuer_match"
+                elif len(issuer_ids) > 1:
+                    decision = "ambiguous_issuer_match"
+                elif ingest_publication(conn, item, issuer_ids) is not None:
+                    decision = "saved_new"
+                else:
+                    decision = "already_known"
+            diagnostics[decision] += 1
+            with conn:
+                conn.execute(
+                    """INSERT INTO rss_item_checks(run_id,source_item_id,title,url,published_at,decision,match_ids_json)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (run_id, item.item_id[:500], item.title[:500], item.url[:1000], item.published_at,
+                     decision, json.dumps(issuer_ids)),
+                )
+        with conn:
+            conn.execute(
+                """DELETE FROM rss_item_checks WHERE run_id NOT IN
+                (SELECT id FROM collector_runs WHERE source_id='cbr_rss' ORDER BY id DESC LIMIT 100)"""
+            )
+        return diagnostics["received"]
+    _run(conn, "cbr_rss", action, diagnostics, pass_run_id=True)
 
 
 def _price_event(conn, bond, current: dict, previous, change: float) -> None:
@@ -297,6 +332,20 @@ def poll_prices(conn, settings: dict, http: Http) -> None:
                 if not current:
                     count_reason("no_valid_quote")
                     continue
+                if current["trading_date"] > datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat():
+                    count_reason("future_trade_date")
+                    continue
+                latest = conn.execute(
+                    "SELECT * FROM price_observations WHERE isin=? ORDER BY trading_date DESC LIMIT 1",
+                    (bond["isin"],),
+                ).fetchone()
+                if latest and current["trading_date"] < latest["trading_date"]:
+                    count_reason("older_than_latest_observation")
+                    continue
+                if latest and current["trading_date"] == latest["trading_date"]:
+                    if not current["trade_moment"] or not latest["trade_moment"] or current["trade_moment"] <= latest["trade_moment"]:
+                        count_reason("same_day_quote_not_newer")
+                        continue
                 previous = conn.execute(
                     """SELECT * FROM price_observations WHERE isin=? AND trading_date<?
                     ORDER BY trading_date DESC LIMIT 1""", (bond["isin"], current["trading_date"])
@@ -305,6 +354,8 @@ def poll_prices(conn, settings: dict, http: Http) -> None:
                     count_reason("comparison_no_prior_observation")
                 elif not current["previous_trade_date"] or previous["trading_date"] != current["previous_trade_date"]:
                     count_reason("comparison_prior_date_mismatch")
+                elif not previous["trade_moment"]:
+                    count_reason("comparison_unverified_prior_observation")
                 elif previous["nominal"] != current["nominal"]:
                     count_reason("comparison_nominal_changed")
                 elif current["previous_clean_price"] is None:
@@ -316,10 +367,12 @@ def poll_prices(conn, settings: dict, http: Http) -> None:
                         _price_event(conn, bond, current, {"clean_price": current["previous_clean_price"]}, change)
                 with conn:
                     conn.execute(
-                        """INSERT INTO price_observations(isin,trading_date,clean_price,nominal,observed_at)
-                        VALUES(?,?,?,?,?) ON CONFLICT(isin,trading_date) DO UPDATE SET
-                        clean_price=excluded.clean_price,nominal=excluded.nominal,observed_at=excluded.observed_at""",
-                        (bond["isin"], current["trading_date"], current["clean_price"], current["nominal"], utcnow()),
+                        """INSERT INTO price_observations(isin,trading_date,clean_price,nominal,observed_at,trade_moment)
+                        VALUES(?,?,?,?,?,?) ON CONFLICT(isin,trading_date) DO UPDATE SET
+                        clean_price=excluded.clean_price,nominal=excluded.nominal,
+                        observed_at=excluded.observed_at,trade_moment=excluded.trade_moment""",
+                        (bond["isin"], current["trading_date"], current["clean_price"], current["nominal"],
+                         utcnow(), current["trade_moment"]),
                     )
                 count += 1
                 diagnostics["accepted"] = count

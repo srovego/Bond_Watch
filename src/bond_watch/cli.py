@@ -4,7 +4,7 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -57,6 +57,12 @@ def status(conn) -> None:
     ).fetchone()
     if latest_prices:
         print(f"Price quotes: accepted {latest_prices['items_seen']} | diagnostics {latest_prices['rejection_counts_json']}")
+    latest_rss = conn.execute(
+        "SELECT items_seen,rejection_counts_json FROM collector_runs "
+        "WHERE source_id='cbr_rss' AND rejection_counts_json IS NOT NULL ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if latest_rss:
+        print(f"CBR RSS: received {latest_rss['items_seen']} | diagnostics {latest_rss['rejection_counts_json']}")
     print("Bonds:")
     for row in conn.execute("SELECT b.isin,b.status,b.resolution_error,i.name FROM bonds b LEFT JOIN issuers i ON i.id=b.issuer_id ORDER BY b.isin"):
         print(f"  {row['isin']}: {row['name'] or 'unresolved'} [{row['status']}] {row['resolution_error'] or ''}")
@@ -65,12 +71,55 @@ def status(conn) -> None:
         print(f"  {row['kind']}: {row['status']} {row['created_at']} {row['error'] or ''}")
 
 
+def rss_recent(conn, limit: int) -> None:
+    run = conn.execute(
+        """SELECT r.id,r.started_at,r.status FROM collector_runs r
+        WHERE r.source_id='cbr_rss' AND EXISTS
+        (SELECT 1 FROM rss_item_checks c WHERE c.run_id=r.id)
+        ORDER BY r.id DESC LIMIT 1"""
+    ).fetchone()
+    if not run:
+        print("No received RSS headlines are recorded yet.")
+        return
+    print(f"CBR RSS run {run['id']} | {run['started_at']} | {run['status']}")
+    for item in conn.execute(
+        """SELECT title,url,decision,match_ids_json FROM rss_item_checks
+        WHERE run_id=? ORDER BY id DESC LIMIT ?""", (run["id"], limit)
+    ):
+        print(f"{item['decision']} | {item['title']} | {item['url']} | issuer IDs {item['match_ids_json']}")
+
+
+def price_audit(conn, limit: int) -> None:
+    condition = "trade_moment IS NULL OR substr(trade_moment,1,10)!=trading_date OR strftime('%w',trading_date) IN ('0','6')"
+    total = conn.execute(f"SELECT count(*) FROM price_observations WHERE {condition}").fetchone()[0]
+    print(f"Price observations requiring review: {total}")
+    for item in conn.execute(
+        f"SELECT isin,trading_date,clean_price,nominal,observed_at,trade_moment FROM price_observations WHERE {condition} ORDER BY trading_date DESC,isin LIMIT ?",
+        (limit,),
+    ):
+        flags = []
+        if not item["trade_moment"]:
+            flags.append("unverified_legacy_date")
+        elif item["trade_moment"][:10] != item["trading_date"]:
+            flags.append("date_mismatch")
+        try:
+            if date.fromisoformat(item["trading_date"]).weekday() >= 5:
+                flags.append("weekend_review")
+        except ValueError:
+            flags.append("invalid_date")
+        print(f"{item['isin']} | {item['trading_date']} | {item['clean_price']} | nominal {item['nominal']} | trade {item['trade_moment'] or '-'} | observed {item['observed_at']} | {','.join(flags)}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bond-watch")
     parser.add_argument("--root", type=Path, default=project_root())
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("init-db", "resolve", "poll", "status", "portfolio", "bot", "backup", "check-telegram"):
         sub.add_parser(name)
+    recent = sub.add_parser("rss-recent")
+    recent.add_argument("--limit", type=int, default=20)
+    audit = sub.add_parser("price-audit")
+    audit.add_argument("--limit", type=int, default=200)
     digest = sub.add_parser("digest")
     digest.add_argument("--dry-run", action="store_true")
     digest.add_argument("--scheduled", action="store_true")
@@ -97,6 +146,10 @@ def main(argv: list[str] | None = None) -> int:
             send_digest(conn, settings, args.scheduled, args.dry_run)
         elif args.command == "status":
             status(conn)
+        elif args.command == "rss-recent":
+            rss_recent(conn, max(1, min(args.limit, 100)))
+        elif args.command == "price-audit":
+            price_audit(conn, max(1, args.limit))
         elif args.command == "portfolio":
             for isin in load_portfolio(root):
                 row = conn.execute("SELECT b.*,i.name issuer_name,i.inn FROM bonds b LEFT JOIN issuers i ON i.id=b.issuer_id WHERE b.isin=?", (isin,)).fetchone()

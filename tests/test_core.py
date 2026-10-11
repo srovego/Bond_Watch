@@ -122,19 +122,36 @@ def test_price_requires_trade_and_nominal():
     assert reasons["invalid_nominal"] == 1
 
 
-def test_price_date_comes_from_iss_and_rejects_conflicts():
+def test_price_date_requires_trade_evidence_and_rejects_conflicts():
     payload = price_fixture()
     set_block_field(payload, "marketdata_yields", "TRADEMOMENT", None)
-    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")["trading_date"] == "2026-10-08"
-    set_block_field(payload, "dataversion", "trade_date", None)
     reasons = {}
     assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
     assert reasons["missing_trade_date"] == 1
+    payload["marketdata"]["columns"].append("LASTTRADEDATE")
+    payload["marketdata"]["data"][0].append("2026-10-08")
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")["trading_date"] == "2026-10-08"
     set_block_field(payload, "marketdata_yields", "TRADEMOMENT", "2026-10-07 20:45:42")
-    set_block_field(payload, "dataversion", "trade_date", "2026-10-08")
     reasons = {}
     assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
     assert reasons["conflicting_trade_date"] == 1
+
+
+def test_weekend_snapshot_does_not_become_trading_date():
+    payload = price_fixture()
+    set_block_field(payload, "dataversion", "trade_date", "2026-10-11")
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", "2026-10-09 20:45:42")
+    result = fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")
+    assert result["trading_date"] == "2026-10-09"
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", None)
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["missing_trade_date"] == 1
+    payload["marketdata"]["columns"].append("TRADEDATE")
+    payload["marketdata"]["data"][0].append("2026-10-11")
+    reasons = {}
+    assert fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4", reasons) is None
+    assert reasons["weekend_date_without_trade_moment"] == 1
 
 
 def test_price_rejects_wrong_board_or_secid():
@@ -330,7 +347,7 @@ def test_verified_ratings_are_seeded_with_provenance(tmp_path):
     conn = connect(tmp_path / "ratings.sqlite")
     sync_portfolio(conn, project_root())
     seed_verified_bonds(conn, project_root())
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert conn.execute("SELECT count(*) FROM bonds WHERE rating IS NOT NULL AND rating_url IS NOT NULL AND rating_date IS NOT NULL").fetchone()[0] == 6
     assert conn.execute("SELECT rating FROM bonds WHERE isin='RU000A1090N4'").fetchone()[0] is None
 
@@ -384,7 +401,7 @@ def test_price_diagnostics_migrate_existing_database(tmp_path):
         raw.executescript(migration + f"\nPRAGMA user_version={index};")
     raw.close()
     conn = connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert "rejection_counts_json" in [row[1] for row in conn.execute("PRAGMA table_info(collector_runs)")]
 
 
@@ -399,3 +416,97 @@ def test_price_rejects_nonpositive_last_and_accepts_missing_previous_close():
     result = fetch_bond_price(FakeHttp([Response(payload)]), "RU000A1095W4")
     assert result["clean_price"] > 0
     assert result["previous_clean_price"] is None
+
+
+def test_existing_v4_database_migrates_trade_moment_and_rss_checks(tmp_path):
+    from bond_watch.db import MIGRATIONS
+    path = tmp_path / "v4.sqlite"
+    raw = sqlite3.connect(path)
+    for index, migration in enumerate(MIGRATIONS[:4], start=1):
+        raw.executescript(migration + f"\nPRAGMA user_version={index};")
+    raw.close()
+    conn = connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert "trade_moment" in [row[1] for row in conn.execute("PRAGMA table_info(price_observations)")]
+    assert conn.execute("SELECT count(*) FROM rss_item_checks").fetchone()[0] == 0
+
+
+def test_cbr_rss_decision_counters_and_recent_headlines(tmp_path, monkeypatch, capsys):
+    from bond_watch.pipeline import poll_news
+    from bond_watch.cli import rss_recent, status
+    conn = connect(tmp_path / "news.sqlite")
+    init_sources(conn, {"sources": {"cbr_rss": True}})
+    with conn:
+        first = conn.execute("INSERT INTO issuers(name,inn) VALUES('ООО Ромашка Финанс','1234567890')").lastrowid
+        second = conn.execute("INSERT INTO issuers(name,inn) VALUES('АО Тест Облигации','0987654321')").lastrowid
+        conn.execute("INSERT INTO bonds(isin,issuer_id,status) VALUES('RU000A0JV4M0',?,'verified')", (first,))
+        conn.execute("INSERT INTO bonds(isin,issuer_id,status) VALUES('RU000A108EF8',?,'verified')", (second,))
+    items = [
+        Publication("cbr_rss", "a", "https://www.cbr.ru/a", "ЦБ", None, "Сообщение ООО Ромашка Финанс", ""),
+        Publication("cbr_rss", "a", "https://www.cbr.ru/a", "ЦБ", None, "Сообщение ООО Ромашка Финанс", ""),
+        Publication("cbr_rss", "b", "https://www.cbr.ru/b", "ЦБ", None, "Нейтральная публикация", ""),
+        Publication("cbr_rss", "c", "https://www.cbr.ru/c", "ЦБ", None, "ООО Ромашка Финанс и АО Тест Облигации", ""),
+        Publication("cbr_rss", "d", "https://www.cbr.ru/d", "ЦБ", None, "Сообщение по ИНН 0987654321", ""),
+    ]
+    monkeypatch.setattr("bond_watch.pipeline.fetch_cbr_rss", lambda *_args, **_kwargs: items)
+    poll_news(conn, {"sources": {"cbr_rss": True}}, FakeHttp([]))
+    run = conn.execute("SELECT items_seen,rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert run["items_seen"] == 5
+    assert json.loads(run["rejection_counts_json"]) == {
+        "received": 5, "already_known": 1, "no_issuer_match": 1,
+        "ambiguous_issuer_match": 1, "saved_new": 2,
+    }
+    assert conn.execute("SELECT count(*) FROM news").fetchone()[0] == 2
+    assert conn.execute("SELECT count(*) FROM rss_item_checks").fetchone()[0] == 5
+    rss_recent(conn, 20)
+    status(conn)
+    output = capsys.readouterr().out
+    assert "Нейтральная публикация" in output
+    assert "no_issuer_match" in output
+    assert "CBR RSS: received 5" in output
+
+
+def test_stale_weekend_quote_does_not_repeat_or_overwrite(tmp_path):
+    from bond_watch.pipeline import poll_prices
+    conn = connect(tmp_path / "prices.sqlite")
+    init_sources(conn, {"sources": {"moex_iss": True}})
+    with conn:
+        issuer = conn.execute("INSERT INTO issuers(name) VALUES('Issuer')").lastrowid
+        conn.execute("INSERT INTO bonds(isin,secid,issuer_id,status) VALUES('RU000A1095W4','RU000A1095W4',?,'verified')", (issuer,))
+    payload = price_fixture()
+    set_block_field(payload, "dataversion", "trade_date", "2026-10-11")
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", "2026-10-09 20:45:42")
+    settings = {"sources": {"moex_iss": True}, "request_pause_seconds": 0}
+    poll_prices(conn, settings, FakeHttp([Response(payload)]))
+    first = conn.execute("SELECT trading_date,trade_moment,observed_at FROM price_observations").fetchone()
+    assert first["trading_date"] == "2026-10-09"
+    poll_prices(conn, settings, FakeHttp([Response(payload)]))
+    second = conn.execute("SELECT trading_date,trade_moment,observed_at FROM price_observations").fetchone()
+    assert tuple(second) == tuple(first)
+    run = conn.execute("SELECT items_seen,rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert run["items_seen"] == 0
+    assert json.loads(run["rejection_counts_json"])["same_day_quote_not_newer"] == 1
+
+
+def test_poll_rejects_undated_weekend_snapshot_and_audits_legacy_rows(tmp_path, capsys):
+    from bond_watch.pipeline import poll_prices
+    from bond_watch.cli import price_audit
+    conn = connect(tmp_path / "prices.sqlite")
+    init_sources(conn, {"sources": {"moex_iss": True}})
+    with conn:
+        issuer = conn.execute("INSERT INTO issuers(name) VALUES('Issuer')").lastrowid
+        conn.execute("INSERT INTO bonds(isin,secid,issuer_id,status) VALUES('RU000A1095W4','RU000A1095W4',?,'verified')", (issuer,))
+        conn.execute("INSERT INTO price_observations(isin,trading_date,clean_price,nominal,observed_at) VALUES(?,?,?,?,?)",
+                     ("RU000A1095W4", "2026-10-11", 100.24, 1000, "2026-10-11"))
+    payload = price_fixture()
+    set_block_field(payload, "dataversion", "trade_date", "2026-10-11")
+    set_block_field(payload, "marketdata_yields", "TRADEMOMENT", None)
+    poll_prices(conn, {"sources": {"moex_iss": True}, "request_pause_seconds": 0}, FakeHttp([Response(payload)]))
+    assert conn.execute("SELECT count(*) FROM price_observations").fetchone()[0] == 1
+    run = conn.execute("SELECT items_seen,rejection_counts_json FROM collector_runs ORDER BY id DESC LIMIT 1").fetchone()
+    assert run["items_seen"] == 0
+    assert json.loads(run["rejection_counts_json"])["missing_trade_date"] == 1
+    price_audit(conn, 20)
+    output = capsys.readouterr().out
+    assert "unverified_legacy_date" in output
+    assert "weekend_review" in output

@@ -29,6 +29,10 @@ pytest -q
 
 База: `data/bond_watch.db`. Лог с ротацией: `data/bond_watch.log`. Резервная копия: `bond-watch backup`. История уведомлений и ключи дедупликации сохраняются между перезапусками.
 
+## Диагностика источников
+
+`bond-watch status` показывает счетчики MOEX ISS и CBR RSS за последние опросы. `bond-watch rss-recent --limit 20` показывает заголовки последнего RSS-опроса и причину обработки каждого; нерелевантные публикации не попадают в `news`. `bond-watch price-audit --limit 200` находит котировки с неподтвержденным моментом сделки или сомнительной датой. Безопасная ручная корректировка старых дат описана в [docs/PRICE_DATE_REPAIR.md](docs/PRICE_DATE_REPAIR.md).
+
 ## Развертывание на Ubuntu VPS
 
 Пошаговые команды и проверка systemd: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Скрипт [scripts/install_ubuntu.sh](scripts/install_ubuntu.sh) готовит пользователя, venv и unit-файлы, но в этой работе не запускался на VPS. Исследование источников и подтверждения ISIN: [docs/SOURCES_REVIEW.md](docs/SOURCES_REVIEW.md). Устройство сервиса: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Проверки: [docs/TESTING.md](docs/TESTING.md).

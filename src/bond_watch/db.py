@@ -82,6 +82,20 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE collector_runs ADD COLUMN rejection_counts_json TEXT;
+    """,
+    """
+    ALTER TABLE price_observations ADD COLUMN trade_moment TEXT;
+    CREATE TABLE rss_item_checks (
+      id INTEGER PRIMARY KEY,
+      run_id INTEGER NOT NULL REFERENCES collector_runs(id) ON DELETE CASCADE,
+      source_item_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      published_at TEXT,
+      decision TEXT NOT NULL,
+      match_ids_json TEXT NOT NULL
+    );
+    CREATE INDEX idx_rss_checks_run ON rss_item_checks(run_id, id);
     """
 ]
 

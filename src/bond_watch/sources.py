@@ -115,6 +115,18 @@ def _iso_date(value) -> str | None:
         return None
 
 
+def _iso_moment(value) -> str | None:
+    if not value:
+        return None
+    try:
+        raw = str(value)
+        if len(raw) <= 10:
+            return None
+        return datetime.fromisoformat(raw).isoformat(sep=" ", timespec="seconds")
+    except ValueError:
+        return None
+
+
 def fetch_bond_price(http: Http, secid: str, rejections: dict[str, int] | None = None) -> dict | None:
     row_rejections: dict[str, int] = {}
 
@@ -172,17 +184,25 @@ def fetch_bond_price(http: Http, secid: str, rejections: dict[str, int] | None =
             continue
         raw_market_date = row.get("LASTTRADEDATE") or row.get("TRADEDATE")
         raw_trade_moment = yields.get((secid, board), {}).get("TRADEMOMENT")
-        dated_values = [value for value in (raw_market_date, raw_trade_moment, versions[0].get("trade_date") if len(versions) == 1 else None) if value]
-        dates = [_iso_date(value) for value in dated_values]
-        if any(value is None for value in dates):
+        trade_moment = _iso_moment(raw_trade_moment)
+        explicit_date = _iso_date(raw_market_date)
+        if (raw_trade_moment and not trade_moment) or (raw_market_date and not explicit_date):
             reject("invalid_trade_date")
             continue
-        if len(set(dates)) > 1:
+        if trade_moment and explicit_date and trade_moment[:10] != explicit_date:
             reject("conflicting_trade_date")
             continue
-        trade_date = dates[0] if dates else session_date
+        # dataversion.trade_date is the table snapshot/session date. On weekends
+        # it can advance while LAST and NUMTRADES still describe an older trade.
+        trade_date = trade_moment[:10] if trade_moment else explicit_date
         if not trade_date:
             reject("missing_trade_date")
+            continue
+        if date.fromisoformat(trade_date).weekday() >= 5 and not trade_moment:
+            reject("weekend_date_without_trade_moment")
+            continue
+        if session_date and trade_date > session_date:
+            reject("trade_date_after_session")
             continue
         return {
             "clean_price": price,
@@ -190,6 +210,7 @@ def fetch_bond_price(http: Http, secid: str, rejections: dict[str, int] | None =
             "previous_trade_date": _iso_date(security.get("PREVDATE")),
             "nominal": nominal,
             "trading_date": trade_date,
+            "trade_moment": trade_moment,
             "board": board,
         }
     record_rejections()

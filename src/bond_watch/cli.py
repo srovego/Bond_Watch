@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .config import load_env, load_portfolio, load_settings, project_root
 from .db import backup, connect, utcnow
+from .email_sender import EmailConfig, TEST_SUBJECT, send_digest_once, send_email
 from .http import Http
 from .pipeline import init_sources, poll, resolve_portfolio, sync_portfolio, seed_verified_bonds
 from .telegram import Telegram, digest_parts, run_bot, send_once
@@ -26,7 +27,7 @@ def setup_logging(root: Path, settings: dict) -> None:
     )
 
 
-def send_digest(conn, settings: dict, scheduled: bool, dry_run: bool) -> None:
+def send_digest(conn, settings: dict, scheduled: bool, dry_run: bool, email: bool = False) -> None:
     now = datetime.now(ZoneInfo(settings.get("digest_timezone", "Europe/Moscow")))
     slot = f"{now:%Y-%m-%d-%H}" if scheduled else f"manual-{utcnow()}"
     key = f"digest:{slot}"
@@ -35,6 +36,10 @@ def send_digest(conn, settings: dict, scheduled: bool, dry_run: bool) -> None:
     parts = digest_parts(conn, since=last["value"] if last else None, until=cutoff)
     if dry_run:
         print("\n\n".join(parts))
+        return
+    if email:
+        delivered = send_digest_once(conn, EmailConfig.from_env(), "\n\n".join(parts))
+        print("Email digest sent" if delivered else "Email digest already handled")
         return
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not chat_id:
@@ -122,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bond-watch")
     parser.add_argument("--root", type=Path, default=project_root())
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init-db", "resolve", "poll", "status", "portfolio", "bot", "backup", "check-telegram"):
+    for name in ("init-db", "resolve", "poll", "status", "portfolio", "bot", "backup", "check-telegram", "check-email"):
         sub.add_parser(name)
     recent = sub.add_parser("rss-recent")
     recent.add_argument("--limit", type=int, default=20)
@@ -132,13 +137,20 @@ def main(argv: list[str] | None = None) -> int:
     digest = sub.add_parser("digest")
     digest.add_argument("--dry-run", action="store_true")
     digest.add_argument("--scheduled", action="store_true")
+    digest.add_argument("--email", action="store_true")
     args = parser.parse_args(argv)
     root = args.root.resolve()
     load_env(root / ".env")
     settings = load_settings(root)
     setup_logging(root, settings)
-    conn = connect(root / settings.get("database", "data/bond_watch.db"))
+    conn = None
     try:
+        if args.command == "check-email":
+            send_email(EmailConfig.from_env(), TEST_SUBJECT,
+                       "Проверка SMTP Bond Watch. Если вы получили это письмо, Gmail STARTTLS работает.\n")
+            print("SMTP test email sent")
+            return 0
+        conn = connect(root / settings.get("database", "data/bond_watch.db"))
         init_sources(conn, settings)
         sync_portfolio(conn, root)
         seed_verified_bonds(conn, root)
@@ -152,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
             poll(conn, root, settings)
             status(conn)
         elif args.command == "digest":
-            send_digest(conn, settings, args.scheduled, args.dry_run)
+            send_digest(conn, settings, args.scheduled, args.dry_run, args.email)
         elif args.command == "status":
             status(conn)
         elif args.command == "rss-recent":
@@ -178,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
         logging.exception("Command failed")
         return 1
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 if __name__ == "__main__":

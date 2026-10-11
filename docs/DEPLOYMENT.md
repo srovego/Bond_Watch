@@ -33,6 +33,19 @@ sudo systemd-analyze calendar '*-*-* 09:00:00 Europe/Moscow'
 
 Если resolve сообщает ошибки, сохраненные проверенные карточки остаются в базе, но цены и RSS следует отдельно проверить командой poll. Проверяйте статусы, а не только код завершения команды: частичная ошибка адаптера отмечается в таблицах sources и collector_runs. Первый запуск poll может не создать ценовой сигнал, потому что еще нет предыдущего наблюдения номинала.
 
+## Ручная проверка Gmail SMTP
+
+При уже настроенном `/opt/bond-watch/.env` убедитесь, что указаны `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO` и `SMTP_USE_STARTTLS=true`. Пароль не выводится командами и не сохраняется в SQLite. Исходящее соединение к Gmail должно допускать порт 587; соединение использует STARTTLS и системные доверенные сертификаты. В рамках этой разработки подключение к VPS и реальная SMTP-отправка не выполнялись.
+
+~~~bash
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch check-email
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch digest --email --dry-run
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch digest --email
+sudo -u bondwatch /opt/bond-watch/.venv/bin/bond-watch status
+~~~
+
+`check-email` отправляет одно тестовое письмо при каждом явном запуске. `digest --email` отправляет текущую сводку вручную и записывает попытку в существующую таблицу `notifications`. Повтор с тем же содержимым и адресатами после статуса `sent` или `uncertain` не отправляет письмо; при `uncertain` сначала проверьте почтовый ящик и журнал. Ошибку подключения, STARTTLS или входа можно исправить и повторить. Расписание Telegram не изменено, автоматический email-таймер не добавлен.
+
 ## Включение
 
 ~~~bash
